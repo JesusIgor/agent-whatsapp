@@ -1,0 +1,50 @@
+version: "3.9"
+
+services:
+
+  backend:
+    build:
+      context: ../backend
+      dockerfile: Dockerfile
+    container_name: ai-backend
+    ports:
+      - "3000:3000"
+    volumes:
+      - ../backend:/app
+      - /app/node_modules
+    environment:
+      - NODE_ENV=development
+    depends_on:
+      - redis
+
+  frontend:
+    build:
+      context: ../frontend
+      dockerfile: Dockerfile
+    container_name: ai-frontend
+    ports:
+      - "5173:5173"
+    volumes:
+      - ../frontend:/app
+      - /app/node_modules
+    environment:
+      - NODE_ENV=development
+
+  evolution:
+    image: atendai/evolution-api
+    container_name: evolution-api
+    ports:
+      - "8080:8080"
+    environment:
+      - AUTHENTICATION_API_KEY=123456
+      - DATABASE_PROVIDER=postgres
+      - DATABASE_CONNECTION_URI=postgresql://postgres:agent-igorj%40@db.ehjyowendprmvfwzsfau.supabase.co:5432/postgres?sslmode=require
+      
+  redis:
+    image: redis:7
+    container_name: ai-redis
+    ports:
+      - "6379:6379"
+
+volumes:
+  evolution_data:
