@@ -2,6 +2,8 @@ import express from 'express'
 import cors from 'cors'
 import dotenv from 'dotenv'
 import whatsappRoutes from './modules/whatsapp/whatsappRoutes'
+import authRoutes from './modules/auth/authRoutes'
+import agentRoutes from './modules/agent/agentRoutes'
 
 dotenv.config()
 
@@ -22,10 +24,7 @@ app.use(express.json())
 app.get('/health', (_req, res) => res.json({ status: 'ok' }))
 
 app.use('/whatsapp', whatsappRoutes)
-
-// TODO: adicionar conforme crescer
-// app.use('/auth', authRoutes)
-// app.use('/clients', clientsRoutes)
-// app.use('/conversations', conversationsRoutes)
+app.use('/auth', authRoutes)
+app.use('/agent', agentRoutes)
 
 export default app
