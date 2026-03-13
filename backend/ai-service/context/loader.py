@@ -1,27 +1,10 @@
-import os
-import psycopg2
-import psycopg2.extras
-from typing import Optional
-
-
-def get_connection():
-    return psycopg2.connect(
-        os.getenv("DATABASE_URL"), cursor_factory=psycopg2.extras.RealDictCursor
-    )
+from db import get_connection
 
 
 async def load_context(company_id: int, client_phone: str) -> dict:
-    """
-    Carrega tudo que o agente precisa saber antes de responder:
-    - dados da company
-    - perfil do petshop (nome do assistente, horários, serviços)
-    - dados do cliente e seus pets
-    """
-    conn = get_connection()
-    cur = conn.cursor()
+    with get_connection() as conn:
+        cur = conn.cursor()
 
-    try:
-        # ── Company + Petshop ─────────────────────
         cur.execute(
             """
             SELECT
@@ -44,17 +27,9 @@ async def load_context(company_id: int, client_phone: str) -> dict:
         if not company:
             raise ValueError(f"Company {company_id} não encontrada ou inativa.")
 
-        # ── Serviços ativos ───────────────────────
         cur.execute(
             """
-            SELECT
-                id,
-                name,
-                description,
-                duration_min,
-                price,
-                price_by_size,
-                duration_multiplier_large
+            SELECT id, name, description, duration_min, price, price_by_size, duration_multiplier_large
             FROM petshop_services
             WHERE company_id = %s AND is_active = TRUE
             ORDER BY name
@@ -63,16 +38,9 @@ async def load_context(company_id: int, client_phone: str) -> dict:
         )
         services = cur.fetchall()
 
-        # ── Cliente ───────────────────────────────
         cur.execute(
             """
-            SELECT
-                id,
-                name,
-                phone,
-                conversation_stage,
-                ai_paused,
-                kanban_column
+            SELECT id, name, phone, conversation_stage, ai_paused, kanban_column
             FROM clients
             WHERE company_id = %s AND phone = %s
         """,
@@ -80,7 +48,6 @@ async def load_context(company_id: int, client_phone: str) -> dict:
         )
         client = cur.fetchone()
 
-        # ── Pets do cliente ───────────────────────
         pets = []
         if client:
             cur.execute(
@@ -93,7 +60,6 @@ async def load_context(company_id: int, client_phone: str) -> dict:
             )
             pets = cur.fetchall()
 
-        # ── Monta contexto final ──────────────────
         return {
             "company_id": company["company_id"],
             "company_name": company["company_name"],
@@ -106,7 +72,3 @@ async def load_context(company_id: int, client_phone: str) -> dict:
             "client": dict(client) if client else None,
             "pets": [dict(p) for p in pets],
         }
-
-    finally:
-        cur.close()
-        conn.close()

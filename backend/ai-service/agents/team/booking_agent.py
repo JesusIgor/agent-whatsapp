@@ -22,6 +22,4 @@ def build_booking_agent(context: dict) -> Agent:
             get_pets,
             get_upcoming_appointments,
         ],
-        show_tool_calls=False,
-        markdown=False,
     )

@@ -9,6 +9,4 @@ def build_sales_agent(context: dict) -> Agent:
         model=OpenAIChat(id="gpt-4o-mini"),
         instructions=build_sales_prompt(context),
         tools=[],  # contexto de serviços já está no prompt
-        show_tool_calls=False,
-        markdown=False,
     )

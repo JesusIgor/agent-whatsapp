@@ -1,22 +1,10 @@
-import os
-import psycopg2
-import psycopg2.extras
-
-
-def get_connection():
-    return psycopg2.connect(
-        os.getenv("DATABASE_URL"), cursor_factory=psycopg2.extras.RealDictCursor
-    )
+from db import get_connection
 
 
 def get_client(company_id: int, phone: str) -> dict:
-    """
-    Retorna dados do cliente pelo telefone.
-    """
-    conn = get_connection()
-    cur = conn.cursor()
-
-    try:
+    """Retorna dados do cliente pelo telefone."""
+    with get_connection() as conn:
+        cur = conn.cursor()
         cur.execute(
             """
             SELECT id, name, phone, email, conversation_stage, kanban_column, ai_paused
@@ -25,23 +13,14 @@ def get_client(company_id: int, phone: str) -> dict:
         """,
             (company_id, phone),
         )
-
         client = cur.fetchone()
-        return dict(client) if client else {}
-
-    finally:
-        cur.close()
-        conn.close()
+    return dict(client) if client else {}
 
 
 def get_pets(company_id: int, client_id: str) -> list:
-    """
-    Retorna todos os pets ativos de um cliente.
-    """
-    conn = get_connection()
-    cur = conn.cursor()
-
-    try:
+    """Retorna todos os pets ativos de um cliente."""
+    with get_connection() as conn:
+        cur = conn.cursor()
         cur.execute(
             """
             SELECT id, name, species, breed, size, weight_kg, gender, birth_date
@@ -51,23 +30,14 @@ def get_pets(company_id: int, client_id: str) -> list:
         """,
             (company_id, client_id),
         )
-
         pets = cur.fetchall()
-        return [dict(p) for p in pets]
-
-    finally:
-        cur.close()
-        conn.close()
+    return [dict(p) for p in pets]
 
 
 def get_upcoming_appointments(company_id: int, client_id: str) -> list:
-    """
-    Retorna os próximos agendamentos do cliente (status pending ou confirmed).
-    """
-    conn = get_connection()
-    cur = conn.cursor()
-
-    try:
+    """Retorna os próximos agendamentos do cliente."""
+    with get_connection() as conn:
+        cur = conn.cursor()
         cur.execute(
             """
             SELECT
@@ -89,10 +59,5 @@ def get_upcoming_appointments(company_id: int, client_id: str) -> list:
         """,
             (company_id, client_id),
         )
-
         rows = cur.fetchall()
-        return [dict(r) for r in rows]
-
-    finally:
-        cur.close()
-        conn.close()
+    return [dict(r) for r in rows]

@@ -10,6 +10,4 @@ def build_faq_agent(context: dict) -> Agent:
         model=OpenAIChat(id="gpt-4o-mini"),
         instructions=build_faq_prompt(context),
         tools=[search_knowledge_base],
-        show_tool_calls=False,
-        markdown=False,
     )
