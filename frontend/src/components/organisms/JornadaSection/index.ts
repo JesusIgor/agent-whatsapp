@@ -1,0 +1,1 @@
+export { JornadaSection } from './JornadaSection'

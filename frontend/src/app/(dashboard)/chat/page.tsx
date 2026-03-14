@@ -1,0 +1,607 @@
+import { Suspense, useState, useRef, useEffect, useCallback } from "react";
+import { useSearchParams } from "react-router-dom";
+import { motion, AnimatePresence } from "framer-motion";
+import { Search } from "lucide-react";
+
+import { DashboardLayout } from "@/components/templates/DashboardLayout";
+import { ConversationItem } from "@/components/molecules/ConversationItem";
+import { ConversationsPipelineHeader } from "@/components/molecules/ConversationsPipelineHeader";
+import { EmptyState } from "@/components/molecules/EmptyState";
+import { ChatBubble } from "@/components/molecules/ChatBubble";
+import { ChatInput } from "@/components/molecules/ChatInput";
+import { ChatHeader } from "@/components/molecules/ChatHeader";
+import { useConversations } from "@/hooks";
+import { conversationService, whatsappService } from "@/services";
+import type { Conversation } from "@/types";
+
+import {
+  type ChatMessage as MockMessage,
+  type ChatConversation as MockConversation,
+  AI_RESPONSES,
+} from "@/data/chat";
+
+function getCurrentTime(): string {
+  return new Date().toLocaleTimeString("pt-BR", {
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
+
+function mapApiConversation(conv: Conversation): MockConversation {
+  const conversationId = conv.id || conv.conversation_id || "";
+
+  return {
+    id: conversationId,
+    name: conv.client_name || "Cliente",
+    phone: conv.client_phone || "",
+    pets: "",
+    lastMessage: `${conv.message_count} mensagens`,
+    time: new Date(conv.last_message_at).toLocaleTimeString("pt-BR", {
+      hour: "2-digit",
+      minute: "2-digit",
+    }),
+    unreadCount: 0,
+    isAiPaused: conv.ai_paused ?? conv.is_ai_paused ?? false,
+    isOnline: false,
+  };
+}
+
+function mapApiMessage(msg: any): MockMessage {
+  const isIncoming = msg.direction === "incoming";
+  const content = isIncoming ? msg.user_message || "" : msg.bot_message || "";
+  return {
+    id: msg.id,
+    variant: isIncoming ? "received" : "sent",
+    message: content,
+    time: new Date(msg.created_at).toLocaleTimeString("pt-BR", {
+      hour: "2-digit",
+      minute: "2-digit",
+    }),
+    isRead: true,
+  };
+}
+
+function ConversationsSidebar({
+  conversations,
+  selectedId,
+  onSelect,
+  searchQuery,
+  onSearchChange,
+  loading,
+}: {
+  conversations: MockConversation[];
+  selectedId: string | null;
+  onSelect: (id: string) => void;
+  searchQuery: string;
+  onSearchChange: (query: string) => void;
+  loading?: boolean;
+}) {
+  const filteredConversations = conversations.filter(
+    (conv) =>
+      conv.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      conv.pets.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      conv.lastMessage.toLowerCase().includes(searchQuery.toLowerCase()),
+  );
+
+  return (
+    <div className="flex h-full flex-col">
+      <ConversationsPipelineHeader title="Conversas" activeTab="chat" />
+      <div className="flex flex-col gap-4 p-4">
+        <div className="flex items-center gap-2 rounded-full border border-[#727B8E]/10 bg-[#F4F6F9] dark:border-[#40485A] dark:bg-[#1A1B1D] px-4 py-2">
+          <Search className="h-4 w-4 text-[#727B8E] dark:text-[#8a94a6]" />
+          <input
+            type="text"
+            value={searchQuery}
+            onChange={(e) => onSearchChange(e.target.value)}
+            placeholder="Buscar conversa..."
+            className="flex-1 bg-transparent text-sm text-[#434A57] placeholder:text-[#727B8E] focus:outline-none dark:text-[#f5f9fc] dark:placeholder:text-[#8a94a6]"
+          />
+        </div>
+      </div>
+
+      <div className="h-px w-full bg-[#727B8E]/10 dark:bg-[#212225]" />
+
+      <div className="flex-1 overflow-y-auto">
+        {loading ? (
+          <div className="flex h-full items-center justify-center p-4">
+            <div className="h-8 w-8 animate-spin rounded-full border-2 border-[#1E62EC] border-t-transparent" />
+          </div>
+        ) : filteredConversations.length === 0 ? (
+          <div className="flex h-full items-center justify-center p-4">
+            <EmptyState
+              image="bored"
+              description={
+                searchQuery
+                  ? "Nenhuma conversa encontrada"
+                  : "Você ainda não tem conversas"
+              }
+              buttonText={searchQuery ? undefined : "Cadastrar cliente"}
+              onButtonClick={searchQuery ? undefined : () => {}}
+            />
+          </div>
+        ) : (
+          filteredConversations.map((conversation) => (
+            <ConversationItem
+              key={conversation.id}
+              {...conversation}
+              isSelected={selectedId === conversation.id}
+              onClick={() => onSelect(conversation.id)}
+            />
+          ))
+        )}
+      </div>
+    </div>
+  );
+}
+
+function ChatArea({
+  conversation,
+  messages,
+  isAiActive,
+  onToggleAi,
+  onSendMessage,
+  isRecording,
+  onStartRecording,
+  onStopRecording,
+  recordingTime,
+  loading,
+}: {
+  conversation: MockConversation | null;
+  messages: MockMessage[];
+  isAiActive: boolean;
+  onToggleAi: () => void;
+  onSendMessage: (message: string) => void;
+  isRecording: boolean;
+  onStartRecording: () => void;
+  onStopRecording: () => void;
+  recordingTime: number;
+  loading?: boolean;
+}) {
+  const messagesContainerRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (messagesContainerRef.current) {
+      messagesContainerRef.current.scrollTop =
+        messagesContainerRef.current.scrollHeight;
+    }
+  }, [messages]);
+
+  if (!conversation) {
+    return (
+      <motion.div
+        initial={{ opacity: 0 }}
+        animate={{ opacity: 1 }}
+        transition={{ duration: 0.3 }}
+        className="flex h-full items-center justify-center"
+      >
+        <EmptyState
+          image="video_call"
+          title="Nenhuma conversa selecionada"
+          description="Selecione uma conversa para iniciar"
+          imageSize={280}
+        />
+      </motion.div>
+    );
+  }
+
+  const formatRecordingTime = (seconds: number) => {
+    const mins = Math.floor(seconds / 60);
+    const secs = seconds % 60;
+    return `${mins}:${secs.toString().padStart(2, "0")}`;
+  };
+
+  return (
+    <motion.div
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      transition={{ duration: 0.3 }}
+      className="flex h-full flex-col"
+    >
+      <ChatHeader
+        name={conversation.name}
+        phone={conversation.phone}
+        pets={conversation.pets}
+        isAiActive={isAiActive}
+        onToggleAi={onToggleAi}
+      />
+
+      <div
+        ref={messagesContainerRef}
+        className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto p-4 sm:p-6"
+      >
+        {loading ? (
+          <div className="flex h-full items-center justify-center">
+            <div className="h-8 w-8 animate-spin rounded-full border-2 border-[#1E62EC] border-t-transparent" />
+          </div>
+        ) : (
+          <AnimatePresence mode="popLayout">
+            {messages.map((msg) => (
+              <motion.div
+                key={msg.id}
+                initial={{ opacity: 0, y: 10 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -10 }}
+                transition={{ duration: 0.2 }}
+              >
+                <ChatBubble {...msg} />
+              </motion.div>
+            ))}
+          </AnimatePresence>
+        )}
+      </div>
+
+      {isRecording && (
+        <div className="flex items-center justify-center gap-3 border-t border-[#727B8E]/10 dark:border-[#40485A] bg-red-50 dark:bg-red-900/20 px-4 py-3">
+          <div className="h-3 w-3 animate-pulse rounded-full bg-red-500" />
+          <span className="text-sm font-medium text-red-600">
+            Gravando... {formatRecordingTime(recordingTime)}
+          </span>
+          <button
+            onClick={onStopRecording}
+            className="rounded-full bg-red-500 px-4 py-1 text-sm text-white transition-colors hover:bg-red-600"
+          >
+            Parar
+          </button>
+        </div>
+      )}
+
+      {!isRecording && (
+        <div className="border-t border-[#727B8E]/10 dark:border-[#40485A] bg-white dark:bg-[#1A1B1D] p-3 sm:p-4">
+          <ChatInput onSend={onSendMessage} onVoice={onStartRecording} />
+        </div>
+      )}
+    </motion.div>
+  );
+}
+
+function ChatPageContent() {
+  const [searchParams] = useSearchParams();
+  const idFromUrl = searchParams.get("id");
+
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [conversations, setConversations] = useState<MockConversation[]>([]);
+  const [messagesMap, setMessagesMap] = useState<Record<string, MockMessage[]>>(
+    {},
+  );
+  const [isAiActive, setIsAiActive] = useState(true);
+  const [isRecording, setIsRecording] = useState(false);
+  const [recordingTime, setRecordingTime] = useState(0);
+  const [loadingConversations, setLoadingConversations] = useState(false);
+  const [loadingMessages, setLoadingMessages] = useState(false);
+  const [useRealApi, setUseRealApi] = useState(false);
+  const recordingIntervalRef = useRef<NodeJS.Timeout | null>(null);
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const audioChunksRef = useRef<Blob[]>([]);
+
+  const { fetchConversations, getConversation, sendMessage, toggleAI } =
+    useConversations();
+
+  const selectedConversation =
+    conversations.find((c) => c.id === selectedId) ?? null;
+  const currentMessages = selectedId ? (messagesMap[selectedId] ?? []) : [];
+
+  useEffect(() => {
+    if (!idFromUrl || loadingConversations) return;
+    setConversations((prev) => {
+      if (prev.some((c) => c.id === idFromUrl)) return prev;
+      const stub: MockConversation = {
+        id: idFromUrl,
+        name: "Conversa",
+        pets: "",
+        lastMessage: "",
+        time: "",
+        unreadCount: 0,
+        isOnline: false,
+        phone: "",
+      };
+      return [...prev, stub];
+    });
+    setSelectedId(idFromUrl);
+  }, [idFromUrl, loadingConversations]);
+
+  const loadConversations = useCallback(async () => {
+    try {
+      setLoadingConversations(true);
+      const apiConversations = await fetchConversations();
+      setConversations(apiConversations.map(mapApiConversation));
+      setUseRealApi(true);
+    } catch {
+      setConversations([]);
+    } finally {
+      setLoadingConversations(false);
+    }
+  }, [fetchConversations]);
+
+  const loadMessages = useCallback(
+    async (conversationId: string) => {
+      try {
+        setLoadingMessages(true);
+        const messages = await conversationService.getMessages(conversationId);
+        setMessagesMap((prev) => ({
+          ...prev,
+          [conversationId]: messages
+            .filter((m: any) => m.user_message || m.bot_message)
+            .map(mapApiMessage),
+        }));
+      } catch {
+      } finally {
+        setLoadingMessages(false);
+      }
+    },
+    [],
+  );
+
+  useEffect(() => {
+    loadConversations();
+  }, [loadConversations]);
+
+  useEffect(() => {
+    setIsAiActive(!(selectedConversation?.isAiPaused ?? false));
+  }, [selectedConversation?.id, selectedConversation?.isAiPaused]);
+
+  useEffect(() => {
+    if (selectedId && messagesMap[selectedId] === undefined) {
+      loadMessages(selectedId);
+    }
+  }, [selectedId, loadMessages, messagesMap]);
+
+  const handleSendMessage = async (message: string) => {
+    if (!selectedId || !selectedConversation) {
+      return;
+    }
+
+    const newMessage: MockMessage = {
+      id: Date.now().toString(),
+      variant: "sent",
+      message,
+      time: getCurrentTime(),
+      isRead: false,
+    };
+
+    setMessagesMap((prev) => ({
+      ...prev,
+      [selectedId]: [...(prev[selectedId] ?? []), newMessage],
+    }));
+
+    setConversations((prev) =>
+      prev.map((conv) =>
+        conv.id === selectedId
+          ? {
+              ...conv,
+              lastMessage: message,
+              time: getCurrentTime(),
+              unreadCount: 0,
+            }
+          : conv,
+      ),
+    );
+
+    if (useRealApi && selectedConversation.phone) {
+      try {
+        await whatsappService.sendMessage({
+          to: selectedConversation.phone,
+          message,
+        });
+      } catch {}
+    }
+
+    if (isAiActive && !useRealApi) {
+      setTimeout(
+        () => {
+          const aiResponse: MockMessage = {
+            id: (Date.now() + 1).toString(),
+            variant: "received",
+            message:
+              AI_RESPONSES[Math.floor(Math.random() * AI_RESPONSES.length)],
+            time: getCurrentTime(),
+          };
+
+          setMessagesMap((prev) => ({
+            ...prev,
+            [selectedId]: [...(prev[selectedId] ?? []), aiResponse],
+          }));
+
+          setConversations((prev) =>
+            prev.map((conv) =>
+              conv.id === selectedId
+                ? {
+                    ...conv,
+                    lastMessage: aiResponse.message,
+                    time: getCurrentTime(),
+                  }
+                : conv,
+            ),
+          );
+        },
+        1000 + Math.random() * 1000,
+      );
+    }
+  };
+
+  const handleToggleAi = async () => {
+    const newState = !isAiActive;
+    setIsAiActive(newState);
+
+    if (useRealApi && selectedConversation) {
+      try {
+        await toggleAI(
+          selectedId!,
+          !newState,
+          newState ? undefined : "Paused by user",
+        );
+        setConversations((prev) =>
+          prev.map((c) =>
+            c.id === selectedId ? { ...c, isAiPaused: !newState } : c,
+          ),
+        );
+      } catch {
+        setIsAiActive(!newState);
+      }
+    }
+  };
+
+  const handleStartRecording = async () => {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      mediaRecorderRef.current = new MediaRecorder(stream);
+      audioChunksRef.current = [];
+
+      mediaRecorderRef.current.ondataavailable = (event) => {
+        if (event.data.size > 0) {
+          audioChunksRef.current.push(event.data);
+        }
+      };
+
+      mediaRecorderRef.current.start();
+      setIsRecording(true);
+      setRecordingTime(0);
+      recordingIntervalRef.current = setInterval(() => {
+        setRecordingTime((prev) => prev + 1);
+      }, 1000);
+    } catch {
+      alert("Não foi possível acessar o microfone. Verifique as permissões.");
+    }
+  };
+
+  const handleStopRecording = () => {
+    if (recordingIntervalRef.current) {
+      clearInterval(recordingIntervalRef.current);
+    }
+
+    if (!mediaRecorderRef.current || !selectedId) {
+      setIsRecording(false);
+      return;
+    }
+
+    const currentRecordingTime = recordingTime;
+
+    mediaRecorderRef.current.onstop = () => {
+      const audioBlob = new Blob(audioChunksRef.current, {
+        type: "audio/webm",
+      });
+      const audioUrl = URL.createObjectURL(audioBlob);
+
+      const mins = Math.floor(currentRecordingTime / 60);
+      const secs = currentRecordingTime % 60;
+      const duration = `${mins}:${secs.toString().padStart(2, "0")}`;
+
+      const audioMessage: MockMessage = {
+        id: Date.now().toString(),
+        variant: "sent",
+        message: `🎤 Mensagem de voz (${duration})`,
+        time: getCurrentTime(),
+        isRead: false,
+        isAudio: true,
+        audioDuration: duration,
+        audioUrl,
+      };
+
+      setMessagesMap((prev) => ({
+        ...prev,
+        [selectedId]: [...(prev[selectedId] ?? []), audioMessage],
+      }));
+
+      setConversations((prev) =>
+        prev.map((conv) =>
+          conv.id === selectedId
+            ? {
+                ...conv,
+                lastMessage: "🎤 Mensagem de voz",
+                time: getCurrentTime(),
+                unreadCount: 0,
+              }
+            : conv,
+        ),
+      );
+
+      if (isAiActive && !useRealApi) {
+        setTimeout(() => {
+          const aiResponse: MockMessage = {
+            id: (Date.now() + 1).toString(),
+            variant: "received",
+            message: "Recebi seu áudio! Vou ouvir e já respondo. 🎧",
+            time: getCurrentTime(),
+          };
+
+          setMessagesMap((prev) => ({
+            ...prev,
+            [selectedId]: [...(prev[selectedId] ?? []), aiResponse],
+          }));
+
+          setConversations((prev) =>
+            prev.map((conv) =>
+              conv.id === selectedId
+                ? {
+                    ...conv,
+                    lastMessage: aiResponse.message,
+                    time: getCurrentTime(),
+                  }
+                : conv,
+            ),
+          );
+        }, 1500);
+      }
+
+      mediaRecorderRef.current?.stream
+        .getTracks()
+        .forEach((track) => track.stop());
+    };
+
+    mediaRecorderRef.current.stop();
+    setIsRecording(false);
+    setRecordingTime(0);
+  };
+
+  useEffect(() => {
+    return () => {
+      if (recordingIntervalRef.current) {
+        clearInterval(recordingIntervalRef.current);
+      }
+    };
+  }, []);
+
+  return (
+    <DashboardLayout
+      sidebar={
+        <ConversationsSidebar
+          conversations={conversations}
+          selectedId={selectedId}
+          onSelect={setSelectedId}
+          searchQuery={searchQuery}
+          onSearchChange={setSearchQuery}
+          loading={loadingConversations}
+        />
+      }
+    >
+      <ChatArea
+        conversation={selectedConversation}
+        messages={currentMessages}
+        isAiActive={isAiActive}
+        onToggleAi={handleToggleAi}
+        onSendMessage={handleSendMessage}
+        isRecording={isRecording}
+        onStartRecording={handleStartRecording}
+        onStopRecording={handleStopRecording}
+        recordingTime={recordingTime}
+        loading={loadingMessages}
+      />
+    </DashboardLayout>
+  );
+}
+
+export default function ChatPage() {
+  return (
+    <Suspense
+      fallback={
+        <DashboardLayout sidebar={null}>
+          <div className="flex h-full items-center justify-center">
+            <div className="h-8 w-8 animate-spin rounded-full border-2 border-[#1E62EC] border-t-transparent" />
+          </div>
+        </DashboardLayout>
+      }
+    >
+      <ChatPageContent />
+    </Suspense>
+  );
+}

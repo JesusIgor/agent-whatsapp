@@ -1,0 +1,319 @@
+@import "tailwindcss";
+
+@custom-variant dark (&:where(.dark, .dark *));
+
+@property --siri-angle {
+  syntax: "<angle>";
+  inherits: false;
+  initial-value: 0deg;
+}
+
+input::-webkit-outer-spin-button,
+input::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+
+input[type=number] {
+  -moz-appearance: textfield;
+}
+
+.siri-orb-gradient {
+  background:
+    conic-gradient(
+      from calc(var(--siri-angle) * 1.2) at 30% 65%,
+      oklch(75% 0.14 255) 0deg,
+      transparent 45deg 315deg,
+      oklch(75% 0.14 255) 360deg
+    ),
+    conic-gradient(
+      from calc(var(--siri-angle) * 0.8) at 70% 35%,
+      oklch(82% 0.11 225) 0deg,
+      transparent 60deg 300deg,
+      oklch(82% 0.11 225) 360deg
+    ),
+    conic-gradient(
+      from calc(var(--siri-angle) * -1.5) at 65% 75%,
+      oklch(78% 0.13 240) 0deg,
+      transparent 90deg 270deg,
+      oklch(78% 0.13 240) 360deg
+    ),
+    conic-gradient(
+      from calc(var(--siri-angle) * 2.1) at 25% 25%,
+      oklch(85% 0.1 220) 0deg,
+      transparent 30deg 330deg,
+      oklch(85% 0.1 220) 360deg
+    ),
+    conic-gradient(
+      from calc(var(--siri-angle) * -0.7) at 80% 80%,
+      oklch(72% 0.15 265) 0deg,
+      transparent 45deg 315deg,
+      oklch(72% 0.15 265) 360deg
+    ),
+    radial-gradient(ellipse 120% 80% at 40% 60%, oklch(80% 0.12 235) 0%, transparent 50%);
+
+  filter: blur(var(--siri-blur, 40px)) contrast(var(--siri-contrast, 1.2)) saturate(1.15);
+  animation: siri-orb-rotate var(--siri-duration, 12s) linear infinite;
+  transform: translateZ(0);
+  will-change: transform;
+}
+
+@keyframes siri-orb-rotate {
+  from {
+    --siri-angle: 0deg;
+  }
+  to {
+    --siri-angle: 360deg;
+  }
+}
+
+.siri-bg-gradient {
+  background:
+    conic-gradient(
+      from calc(var(--siri-angle) * 0.5) at 50% 100%,
+      oklch(45% 0.22 250 / 0.6) 0deg,
+      transparent 50deg 310deg,
+      oklch(45% 0.22 250 / 0.6) 360deg
+    ),
+    conic-gradient(
+      from calc(var(--siri-angle) * -0.3) at 75% 95%,
+      oklch(50% 0.20 255 / 0.5) 0deg,
+      transparent 55deg 305deg,
+      oklch(50% 0.20 255 / 0.5) 360deg
+    ),
+    conic-gradient(
+      from calc(var(--siri-angle) * 0.7) at 25% 98%,
+      oklch(42% 0.21 248 / 0.55) 0deg,
+      transparent 60deg 300deg,
+      oklch(42% 0.21 248 / 0.55) 360deg
+    ),
+    conic-gradient(
+      from calc(var(--siri-angle) * -0.4) at 85% 90%,
+      oklch(48% 0.19 252 / 0.45) 0deg,
+      transparent 45deg 315deg,
+      oklch(48% 0.19 252 / 0.45) 360deg
+    ),
+    radial-gradient(ellipse 100% 50% at 50% 100%, oklch(50% 0.20 250 / 0.5) 0%, transparent 50%);
+
+  filter: blur(100px) saturate(1.3);
+  animation: siri-orb-rotate 25s linear infinite;
+  transform: translateZ(0);
+  will-change: transform;
+  z-index: 0;
+}
+
+:root {
+  --background: #ffffff;
+  --foreground: #171717;
+  --surface: #ffffff;
+  --surface-elevated: #F4F6F9;
+  --border: rgba(114, 123, 142, 0.1);
+  --nav-bg: #ffffff;
+
+  --color-primary: #1E62EC;
+  --color-primary-hover: #1A56D4;
+  --color-secondary: #727B8E;
+  --color-dark-surface: #0E1117;
+  --header-gradient: #1B5FE9;
+
+  --color-text-heading: #070707;
+  --color-text-body: #434A57;
+  --color-text-muted: #727B8E;
+  --color-text-dark: #12141B;
+  --color-text-nav: #202026;
+
+  --tracking-heading: -1.92px;
+  --tracking-card-title: -0.5px;
+  --tracking-feedback: -0.36px;
+  --tracking-label: 3px;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-surface: var(--surface);
+  --color-surface-elevated: var(--surface-elevated);
+  --color-header-gradient: var(--header-gradient);
+  --color-primary: var(--color-primary);
+  --color-primary-hover: var(--color-primary-hover);
+  --color-secondary: var(--color-secondary);
+  --color-dark-surface: var(--color-dark-surface);
+  --color-text-heading: var(--color-text-heading);
+  --color-text-body: var(--color-text-body);
+  --color-text-muted: var(--color-text-muted);
+  --color-text-dark: var(--color-text-dark);
+  --color-text-nav: var(--color-text-nav);
+  --font-sans: 'Inter', sans-serif;
+  --font-be-vietnam-pro: 'Be Vietnam Pro', sans-serif;
+  --font-manrope: 'Manrope', sans-serif;
+  --font-plus-jakarta-sans: 'Plus Jakarta Sans', sans-serif;
+
+  --tracking-heading: -1.92px;
+  --tracking-card-title: -0.5px;
+  --tracking-feedback: -0.36px;
+  --tracking-label: 3px;
+}
+
+.dark {
+  --background: #272A34;
+  --foreground: #f5f9fc;
+  --surface: #1A1B1D;
+  --surface-elevated: #212225;
+  --border: #40485A;
+  --nav-bg: rgba(31, 36, 45, 0.95);
+  --color-text-heading: #f5f9fc;
+  --color-text-body: #e8ecf1;
+  --color-text-muted: #8a94a6;
+  --color-text-dark: #f5f9fc;
+  --color-text-nav: #e8ecf1;
+  --header-gradient: linear-gradient(135deg, #1B5FE9 0%, #1A1B1D 100%);
+  --card: #1A1B1D;
+  --muted: #3A4150;
+  --muted-foreground: #8a94a6;
+  --accent: #3A4150;
+  --accent-foreground: #f5f9fc;
+  --sidebar-background: #1F242D;
+  --sidebar-primary: #2172e5;
+}
+
+html {
+  height: 100%;
+  overflow-x: hidden;
+  min-height: 100dvh;
+}
+
+body {
+  background: var(--background);
+  color: var(--foreground);
+  font-family: Arial, Helvetica, sans-serif;
+  margin: 0;
+  min-height: 100%;
+  height: 100%;
+  overflow-x: hidden;
+}
+
+button {
+  cursor: pointer;
+}
+
+@keyframes marquee {
+  0% { transform: translateX(0); }
+  100% { transform: translateX(-50%); }
+}
+
+.animate-marquee {
+  animation: marquee var(--marquee-duration, 30s) linear infinite;
+}
+
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(12px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes fadeInUp {
+  from {
+    opacity: 0;
+    transform: translateY(20px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes scaleIn {
+  from {
+    opacity: 0;
+    transform: scale(0.96);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+@keyframes slideInRight {
+  from {
+    opacity: 0;
+    transform: translateX(12px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+@keyframes backdropFade {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+.animate-fade-in {
+  animation: fadeIn 0.4s ease-out forwards;
+}
+
+.animate-fade-in-up {
+  animation: fadeInUp 0.5s ease-out forwards;
+}
+
+.animate-scale-in {
+  animation: scaleIn 0.3s ease-out forwards;
+}
+
+.animate-slide-in-right {
+  animation: slideInRight 0.35s ease-out forwards;
+}
+
+.animate-backdrop {
+  animation: backdropFade 0.25s ease-out forwards;
+}
+
+@keyframes calendarDaySelect {
+  0% { transform: scale(1); }
+  50% { transform: scale(1.04); }
+  100% { transform: scale(1); }
+}
+
+.animate-calendar-day-select {
+  animation: calendarDaySelect 0.35s ease-out;
+}
+
+.animation-delay-75 { animation-delay: 75ms; }
+.animation-delay-150 { animation-delay: 150ms; }
+.animation-delay-225 { animation-delay: 225ms; }
+.animation-delay-300 { animation-delay: 300ms; }
+.animation-delay-375 { animation-delay: 375ms; }
+.animation-delay-450 { animation-delay: 450ms; }
+.animation-delay-525 { animation-delay: 525ms; }
+.animation-delay-600 { animation-delay: 600ms; }
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-fade-in,
+  .animate-fade-in-up,
+  .animate-scale-in,
+  .animate-slide-in-right,
+  .animate-backdrop,
+  .animate-calendar-day-select,
+  .siri-orb-gradient,
+  .siri-bg-gradient {
+    animation: none;
+  }
+}
+
+html,
+body,
+* {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+html::-webkit-scrollbar,
+body::-webkit-scrollbar,
+*::-webkit-scrollbar {
+  display: none;
+}

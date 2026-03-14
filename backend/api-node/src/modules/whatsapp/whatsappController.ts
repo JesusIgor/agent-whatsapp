@@ -94,3 +94,97 @@ export async function disconnectWhatsApp(req: Request, res: Response) {
   await disconnectSession(String(companyId))
   return res.json({ message: 'Sessão desconectada com sucesso.' })
 }
+
+// ─────────────────────────────────────────
+// Rotas autenticadas (companyId via JWT)
+// ─────────────────────────────────────────
+
+// GET /whatsapp/status
+export async function getMyStatus(req: Request, res: Response) {
+  const companyId = req.user!.companyId
+  const session = await prisma.whatsappSession.findUnique({ where: { companyId } })
+
+  if (!session) {
+    return res.json({ status: 'disconnected', phone: null })
+  }
+
+  return res.json({
+    status: session.status,
+    phone: session.phoneNumber,
+    last_connected: session.connectedAt?.toISOString() ?? null,
+  })
+}
+
+// GET /whatsapp/qr — inicia sessão e retorna QR
+export async function getQRCode(req: Request, res: Response) {
+  const companyId = req.user!.companyId
+
+  const company = await prisma.saasCompany.findUnique({ where: { id: companyId } })
+  if (!company) return res.status(404).json({ error: 'Company não encontrada' })
+
+  const existing = await prisma.whatsappSession.findUnique({ where: { companyId } })
+  if (existing?.status === 'connected') {
+    return res.status(409).json({
+      error: 'Sessão WhatsApp já está ativa.',
+      phone: existing.phoneNumber,
+    })
+  }
+
+  return new Promise<void>((resolve) => {
+    let responded = false
+
+    startBaileysSession(String(companyId), async (qr) => {
+      if (!responded) {
+        responded = true
+        try {
+          const qrBase64 = await QRCode.toDataURL(qr)
+          res.json({
+            qr: qrBase64,
+            status: 'connecting',
+            expires_at: new Date(Date.now() + 60000).toISOString(),
+          })
+        } catch {
+          res.status(500).json({ error: 'Erro ao gerar QR code' })
+        }
+        resolve()
+      }
+    })
+
+    setTimeout(() => {
+      if (!responded) {
+        responded = true
+        res.status(408).json({ error: 'Timeout ao gerar QR code. Tente novamente.' })
+        resolve()
+      }
+    }, 30000)
+  })
+}
+
+// POST /whatsapp/logout
+export async function logoutMyWhatsApp(req: Request, res: Response) {
+  const companyId = req.user!.companyId
+  await disconnectSession(String(companyId))
+  return res.json({ success: true, message: 'Sessão desconectada com sucesso.' })
+}
+
+// POST /whatsapp/reconnect
+export async function reconnectMyWhatsApp(req: Request, res: Response) {
+  const companyId = req.user!.companyId
+  const company = await prisma.saasCompany.findUnique({ where: { id: companyId } })
+  if (!company) return res.status(404).json({ error: 'Company não encontrada' })
+
+  await startBaileysSession(String(companyId))
+  return res.json({ success: true })
+}
+
+// GET /whatsapp/health
+export async function healthCheck(req: Request, res: Response) {
+  const companyId = req.user!.companyId
+  const session = await prisma.whatsappSession.findUnique({ where: { companyId } })
+  return res.json({
+    status: session?.status === 'connected' ? 'healthy' : 'unhealthy',
+    connection: session?.status ?? 'disconnected',
+    uptime: process.uptime(),
+    last_message_at: null,
+  })
+}

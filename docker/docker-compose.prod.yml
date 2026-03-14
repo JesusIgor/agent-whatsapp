@@ -1,0 +1,76 @@
+# Produção — Docker Compose
+# Uso: docker compose -f docker/docker-compose.prod.yml up -d --build
+
+services:
+
+  backend:
+    build:
+      context: ../backend/api-node
+      dockerfile: Dockerfile.prod
+    container_name: petshop-backend
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      - NODE_ENV=production
+    env_file:
+      - ../backend/api-node/.env
+    volumes:
+      - baileys_sessions:/app/sessions
+    depends_on:
+      - redis
+    networks:
+      - petshop-network
+
+  ai-service:
+    build:
+      context: ../backend/ai-service
+      dockerfile: Dockerfile
+    container_name: petshop-ai-service
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    env_file:
+      - ../backend/ai-service/.env
+    dns:
+      - 8.8.8.8
+      - 8.8.4.4
+    depends_on:
+      - redis
+    networks:
+      - petshop-network
+
+  frontend:
+    build:
+      context: ../frontend
+      dockerfile: Dockerfile.prod
+      args:
+        - VITE_API_URL=${VITE_API_URL:-http://localhost:3000}
+    container_name: petshop-frontend
+    restart: unless-stopped
+    ports:
+      - "80:80"
+    depends_on:
+      - backend
+    networks:
+      - petshop-network
+
+  redis:
+    image: redis:7-alpine
+    container_name: petshop-redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    networks:
+      - petshop-network
+
+volumes:
+  redis_data:
+  baileys_sessions:
+
+networks:
+  petshop-network:
+    driver: bridge
+    name: petshop-network

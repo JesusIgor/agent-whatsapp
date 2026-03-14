@@ -1,6 +1,7 @@
 import { proto } from '@whiskeysockets/baileys'
 import { prisma } from '../../lib/prisma'
 import { sendTextMessage } from '../../services/baileysService'
+import { runAgent } from '../../agent/AgentService'
 
 // ─────────────────────────────────────────
 // Processa mensagem recebida do Baileys
@@ -84,7 +85,7 @@ export async function handleIncomingMessage(
 
   // ── 4. Gera e envia resposta do agente ───
   if (!client.aiPaused) {
-    const reply = await generateAgentReply(companyId, conversation.id, text)
+    const reply = await generateAgentReply(companyId, phone, text)
 
     if (reply) {
       await prisma.agentMessage.create({
@@ -105,13 +106,18 @@ export async function handleIncomingMessage(
 }
 
 // ─────────────────────────────────────────
-// Stub do agente — substituir pelo LLM real
+// Chama o ai-service para gerar resposta
 // ─────────────────────────────────────────
 async function generateAgentReply(
   companyId: number,
-  conversationId: string,
+  phone: string,
   userMessage: string
 ): Promise<string | null> {
-  // TODO: buscar config da company + histórico + chamar LLM
-  return `Olá! Recebemos sua mensagem. Em breve retornaremos! 🐾`
+  try {
+    const response = await runAgent(companyId, phone, userMessage)
+    return response.reply
+  } catch (err) {
+    console.error(`[Handler][company:${companyId}] Erro ao chamar AgentService:`, err)
+    return 'Desculpe, estou com dificuldades técnicas no momento. Tente novamente em alguns instantes. 🐾'
+  }
 }

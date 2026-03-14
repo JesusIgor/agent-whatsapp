@@ -1,0 +1,1 @@
+export { AuzapLogo } from './AuzapLogo'

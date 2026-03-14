@@ -3,17 +3,26 @@ import {
   getStatus,
   connectWhatsApp,
   disconnectWhatsApp,
+  getMyStatus,
+  getQRCode,
+  logoutMyWhatsApp,
+  reconnectMyWhatsApp,
+  healthCheck,
 } from './whatsappController'
+import { verifyToken } from '../../middleware/authMiddleware'
 
 const router = Router()
 
-// GET  /whatsapp/status/:companyId  → status da sessão
+// ── Rotas com :companyId explícito (admin / direto) ──
 router.get('/status/:companyId', getStatus)
-
-// POST /whatsapp/connect/:companyId → gera QR code
 router.post('/connect/:companyId', connectWhatsApp)
-
-// POST /whatsapp/disconnect/:companyId → desconecta
 router.post('/disconnect/:companyId', disconnectWhatsApp)
+
+// ── Rotas autenticadas (companyId via JWT) ──
+router.get('/status', verifyToken, getMyStatus)
+router.get('/qr', verifyToken, getQRCode)
+router.post('/logout', verifyToken, logoutMyWhatsApp)
+router.post('/reconnect', verifyToken, reconnectMyWhatsApp)
+router.get('/health', verifyToken, healthCheck)
 
 export default router

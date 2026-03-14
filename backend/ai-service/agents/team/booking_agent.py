@@ -2,24 +2,25 @@ from agno.agent import Agent
 from agno.models.openai import OpenAIChat
 from prompts.booking_prompt import build_booking_prompt
 from tools.booking_tools import (
-    check_availability,
+    get_services,
+    get_available_times,
     create_appointment,
     cancel_appointment,
 )
-from tools.client_tools import get_client, get_pets, get_upcoming_appointments
+from tools.client_tools import get_client_pets, get_upcoming_appointments
 
 
-def build_booking_agent(context: dict) -> Agent:
+def build_booking_agent(context: dict, router_ctx: dict) -> Agent:
     return Agent(
         name="Booking Agent",
         model=OpenAIChat(id="gpt-4o-mini"),
-        instructions=build_booking_prompt(context),
+        instructions=build_booking_prompt(context, router_ctx),
         tools=[
-            check_availability,
+            get_services,
+            get_available_times,
             create_appointment,
             cancel_appointment,
-            get_client,
-            get_pets,
+            get_client_pets,
             get_upcoming_appointments,
         ],
     )

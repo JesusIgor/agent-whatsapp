@@ -1,0 +1,1 @@
+export { FeedbacksSection } from './FeedbacksSection'

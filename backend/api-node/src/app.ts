@@ -2,6 +2,7 @@ import express from 'express'
 import cors from 'cors'
 import dotenv from 'dotenv'
 import whatsappRoutes from './modules/whatsapp/whatsappRoutes'
+import authRoutes from './modules/auth/authRoutes'
 
 dotenv.config()
 
@@ -11,7 +12,7 @@ const app = express()
 // Middlewares globais
 // ─────────────────────────────────────────
 app.use(cors({
-  origin: process.env.FRONTEND_URL || 'http://localhost:5173',
+  origin: (origin, callback) => callback(null, true),
   credentials: true,
 }))
 app.use(express.json())
@@ -21,10 +22,10 @@ app.use(express.json())
 // ─────────────────────────────────────────
 app.get('/health', (_req, res) => res.json({ status: 'ok' }))
 
+app.use('/auth', authRoutes)
 app.use('/whatsapp', whatsappRoutes)
 
 // TODO: adicionar conforme crescer
-// app.use('/auth', authRoutes)
 // app.use('/clients', clientsRoutes)
 // app.use('/conversations', conversationsRoutes)
 

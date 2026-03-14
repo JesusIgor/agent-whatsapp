@@ -51,10 +51,15 @@ services:
     ports:
       - "5173:5173"
     volumes:
-      - ../frontend/src:/app/src
-      - ../frontend/.env:/app/.env
+      - ../frontend:/app          # monta tudo do host (hot reload)
+      - /app/node_modules         # anonymous volume: preserva node_modules do container
     environment:
       - NODE_ENV=development
+      # VITE_BACKEND_URL é usado APENAS pelo processo Vite (proxy server-side).
+      # O browser NUNCA vê esse valor — ele só fala com localhost:5173/api/...
+      - VITE_BACKEND_URL=http://backend:3000
+    depends_on:
+      - backend
     networks:
       - petshop-network
 

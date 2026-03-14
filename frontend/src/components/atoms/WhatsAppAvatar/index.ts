@@ -1,0 +1,1 @@
+export { WhatsAppAvatar } from './WhatsAppAvatar'
