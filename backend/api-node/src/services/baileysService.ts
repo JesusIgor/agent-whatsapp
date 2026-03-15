@@ -1,12 +1,8 @@
 // @ts-ignore
 import makeWASocket, {
-  // @ts-expect-error - Baileys types not properly exported
   DisconnectReason,
-  // @ts-expect-error - Baileys types not properly exported
   fetchLatestBaileysVersion,
-  // @ts-expect-error - Baileys types not properly exported
   makeCacheableSignalKeyStore,
-  // @ts-expect-error - Baileys types not properly exported
   useMultiFileAuthState,
 } from '@whiskeysockets/baileys'
 import { Boom } from '@hapi/boom'

@@ -12,3 +12,7 @@ frontend copy
 
 # Baileys
 backend/api-node/sessions
+
+# IA
+.claude
+.hai
