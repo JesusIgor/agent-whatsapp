@@ -19,16 +19,25 @@ export async function listConversations(req: Request, res: Response) {
       take: parseInt(limit as string),
       include: {
         client: true,
-        messages: {
-          select: { role: true, createdAt: true },
-          orderBy: { createdAt: 'desc' },
-          take: 1,
-        },
+        _count: { select: { messages: true } },
       },
       orderBy: { lastMessageAt: 'desc' },
     })
 
-    res.json(conversations)
+    const shaped = conversations.map((conv) => ({
+      id: conv.id,
+      conversation_id: conv.id,
+      client_id: conv.clientId,
+      client_name: conv.client?.name ?? null,
+      client_phone: conv.client?.phone ?? conv.whatsappNumber ?? null,
+      message_count: conv._count.messages,
+      last_message_at: conv.lastMessageAt,
+      started_at: conv.startedAt,
+      ai_paused: conv.client?.aiPaused ?? false,
+      stage: conv.client?.conversationStage ?? null,
+    }))
+
+    res.json(shaped)
   } catch (error) {
     console.error('Error listing conversations:', error)
     res.status(500).json({ error: 'Failed to list conversations' })
@@ -195,15 +204,30 @@ export async function toggleAI(req: Request, res: Response) {
       return res.status(400).json({ error: 'Conversation has no associated client' })
     }
 
+    const wasAiPaused = conversation.client?.aiPaused ?? false
+
     // Update client's AI pause status
     await prisma.client.update({
       where: { id: conversation.clientId },
       data: {
         aiPaused: ai_paused,
         aiPausedAt: ai_paused ? new Date() : null,
-        aiPauseReason: ai_pause_reason,
+        aiPauseReason: ai_pause_reason ?? null,
       },
     })
+
+    // Quando IA é reativada: notifica ai-service para logar e limpar Redis
+    if (wasAiPaused && !ai_paused) {
+      const phone = conversation.client?.phone ?? conversation.whatsappNumber ?? ''
+      const aiServiceUrl = process.env.AI_SERVICE_URL || 'http://localhost:8000'
+      fetch(`${aiServiceUrl}/reactivate`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ company_id: companyId, client_phone: phone }),
+      }).catch((err) =>
+        console.error(`[toggleAI][company:${companyId}] Falha ao notificar reativação no ai-service:`, err)
+      )
+    }
 
     res.json({
       success: true,

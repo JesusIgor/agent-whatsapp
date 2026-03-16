@@ -35,7 +35,7 @@ export async function getPetshop(req: Request, res: Response) {
     const { petshopId } = req.params
 
     const petshop = await prisma.saasPetshop.findUnique({
-      where: { id: parseInt(petshopId) },
+      where: { id: parseInt(petshopId as any) },
       include: {
         company: true,
       },
@@ -127,7 +127,7 @@ export async function updatePetshop(req: Request, res: Response) {
     } = req.body
 
     const existing = await prisma.saasPetshop.findUnique({
-      where: { id: parseInt(petshopId) },
+      where: { id: parseInt(petshopId as any) },
     })
 
     if (!existing) {
@@ -157,7 +157,7 @@ export async function updatePetshop(req: Request, res: Response) {
     if (is_active !== undefined) updateData.isActive = is_active
 
     const petshop = await prisma.saasPetshop.update({
-      where: { id: parseInt(petshopId) },
+      where: { id: parseInt(petshopId as any) },
       data: updateData,
       include: { company: true },
     })

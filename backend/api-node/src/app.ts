@@ -8,6 +8,8 @@ import conversationRoutes from './modules/conversations/conversationRoutes'
 import petRoutes from './modules/pets/petRoutes'
 import serviceRoutes from './modules/services/serviceRoutes'
 import petshopRoutes from './modules/petshops/petshopRoutes'
+import appointmentRoutes from './modules/appointments/appointmentRoutes'
+import internalRoutes from './modules/internal/internalRoutes'
 
 dotenv.config()
 
@@ -34,5 +36,7 @@ app.use('/conversations', conversationRoutes)
 app.use('/pets', petRoutes)
 app.use('/services', serviceRoutes)
 app.use('/petshops', petshopRoutes)
+app.use('/appointments', appointmentRoutes)
+app.use('/internal', internalRoutes)
 
 export default app
