@@ -8,6 +8,7 @@ import {
   getAnalysis,
   toggleAI,
   searchMessages,
+  updateConversationStage,
 } from './conversationController'
 
 const router = Router()
@@ -35,5 +36,8 @@ router.get('/:conversationId/analysis', getAnalysis)
 
 // PUT /conversations/:conversationId/toggle-ai - Toggle AI
 router.put('/:conversationId/toggle-ai', toggleAI)
+
+// PUT /conversations/:conversationId/stage - Update pipeline stage
+router.put('/:conversationId/stage', updateConversationStage)
 
 export default router

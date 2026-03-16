@@ -35,6 +35,7 @@ export async function listConversations(req: Request, res: Response) {
       started_at: conv.startedAt,
       ai_paused: conv.client?.aiPaused ?? false,
       stage: conv.client?.conversationStage ?? null,
+      kanban_column: conv.client?.kanbanColumn ?? null,
     }))
 
     res.json(shaped)
@@ -237,6 +238,41 @@ export async function toggleAI(req: Request, res: Response) {
   } catch (error) {
     console.error('Error toggling AI:', error)
     res.status(500).json({ error: 'Failed to toggle AI' })
+  }
+}
+
+// PUT /conversations/:conversationId/stage - Update pipeline kanban column
+export async function updateConversationStage(req: Request, res: Response) {
+  try {
+    const companyId = req.user!.companyId
+    const { conversationId } = req.params
+    const { kanban_column } = req.body
+
+    if (!kanban_column) {
+      return res.status(400).json({ error: 'kanban_column is required' })
+    }
+
+    const conversation = await prisma.agentConversation.findUnique({
+      where: { id: conversationId },
+    })
+
+    if (!conversation || conversation.companyId !== companyId) {
+      return res.status(404).json({ error: 'Conversation not found' })
+    }
+
+    if (!conversation.clientId) {
+      return res.status(400).json({ error: 'Conversation has no associated client' })
+    }
+
+    await prisma.client.update({
+      where: { id: conversation.clientId },
+      data: { kanbanColumn: kanban_column },
+    })
+
+    res.json({ success: true, kanban_column, conversation_id: conversationId })
+  } catch (error) {
+    console.error('Error updating conversation stage:', error)
+    res.status(500).json({ error: 'Failed to update conversation stage' })
   }
 }
 

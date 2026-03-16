@@ -1,11 +1,16 @@
 import { Request, Response } from 'express'
 import { prisma } from '../../lib/prisma'
 
-// Combina scheduledDate (Date) + schedule.startTime (Time) em ISO string
+// Combina scheduledDate (Date) + schedule.startTime (Time) em ISO string com offset Brasília
+// startTime @db.Time é armazenado em UTC, mas representa horário local (BRT = UTC-3)
 function toScheduledAt(date: Date, startTime: Date): string {
-  const d = new Date(date)
-  d.setHours(startTime.getHours(), startTime.getMinutes(), 0, 0)
-  return d.toISOString()
+  const y = date.getUTCFullYear()
+  const m = String(date.getUTCMonth() + 1).padStart(2, '0')
+  const d = String(date.getUTCDate()).padStart(2, '0')
+  const h = String(startTime.getUTCHours()).padStart(2, '0')
+  const min = String(startTime.getUTCMinutes()).padStart(2, '0')
+  // Retorna com offset explícito -03:00 para que o cliente exiba corretamente como horário de Brasília
+  return `${y}-${m}-${d}T${h}:${min}:00-03:00`
 }
 
 function shapeAppointment(a: any) {

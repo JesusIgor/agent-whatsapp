@@ -1,6 +1,66 @@
 import { Request, Response } from 'express'
 import { prisma } from '../../lib/prisma'
 
+const DAY_MAP: Record<string, number> = {
+  domingo: 0,
+  segunda: 1,
+  terca: 2,
+  'terça': 2,
+  quarta: 3,
+  quinta: 4,
+  sexta: 5,
+  sabado: 6,
+  'sábado': 6,
+}
+
+async function syncBusinessHoursToSchedules(
+  companyId: number,
+  businessHours: Record<string, any>,
+  capacity: number
+): Promise<void> {
+  const pad = (n: number) => String(n).padStart(2, '0')
+
+  for (const [day, entry] of Object.entries(businessHours)) {
+    const weekday = DAY_MAP[day.toLowerCase()]
+    if (weekday === undefined) continue
+
+    // Remove existing slots for this weekday
+    await prisma.petshopSchedule.deleteMany({ where: { companyId, weekday } })
+
+    // Support both string ("09:00-18:00") and object ({ open, close }) formats
+    let openH: number, closeH: number
+    if (typeof entry === 'string' && entry.includes('-')) {
+      const [openStr, closeStr] = entry.split('-')
+      openH = parseInt(openStr.split(':')[0], 10)
+      closeH = parseInt(closeStr.split(':')[0], 10)
+    } else if (entry && typeof entry === 'object' && 'open' in entry && 'close' in entry) {
+      openH = parseInt(String(entry.open).split(':')[0], 10)
+      closeH = parseInt(String(entry.close).split(':')[0], 10)
+    } else {
+      continue // Day closed or invalid
+    }
+
+    if (isNaN(openH) || isNaN(closeH) || openH >= closeH) continue
+
+    const slots = []
+    for (let h = openH; h < closeH; h++) {
+      // Store as UTC time strings — treated as local BRT hours (UTC-3)
+      slots.push({
+        companyId,
+        weekday,
+        startTime: new Date(`1970-01-01T${pad(h)}:00:00Z`),
+        endTime: new Date(`1970-01-01T${pad(h + 1)}:00:00Z`),
+        capacity,
+        isActive: true,
+      })
+    }
+
+    if (slots.length > 0) {
+      await prisma.petshopSchedule.createMany({ data: slots })
+    }
+  }
+}
+
 // GET /petshops - List all petshops
 export async function listPetshops(req: Request, res: Response) {
   try {
@@ -161,6 +221,14 @@ export async function updatePetshop(req: Request, res: Response) {
       data: updateData,
       include: { company: true },
     })
+
+    // Sync business hours to petshop_schedules table
+    if (business_hours !== undefined) {
+      const capacityPerHour = petshop.defaultCapacityPerHour ?? 3
+      await syncBusinessHoursToSchedules(existing.companyId, business_hours, capacityPerHour).catch(
+        (err) => console.error('[updatePetshop] Failed to sync business hours:', err)
+      )
+    }
 
     res.json(petshop)
   } catch (error) {

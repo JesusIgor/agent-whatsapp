@@ -91,6 +91,15 @@ export const conversationService = {
     )
     return response.data
   },
+  async updateStage(
+    conversationId: string,
+    kanban_column: string
+  ): Promise<{ success: boolean; kanban_column: string }> {
+    const response = await api.put(`/conversations/${conversationId}/stage`, {
+      kanban_column,
+    })
+    return response.data
+  },
   async searchMessages(
     query: string,
     params?: {

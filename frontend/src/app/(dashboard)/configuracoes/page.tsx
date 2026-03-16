@@ -49,15 +49,17 @@ function SettingsProfileSidebar({
   error,
   onNovoServico,
   showNovoServico,
+  onLogout,
 }: {
   petshop: Petshop | null;
   loading?: boolean;
   error?: string | null;
   onNovoServico?: () => void;
   showNovoServico: boolean;
+  onLogout: () => void;
 }) {
   return (
-    <div className="flex flex-col items-center">
+    <div className="flex flex-col gap-4">
       <div className="flex flex-col items-center gap-4 rounded-lg sm:flex-row sm:items-start">
         <img
           width={200}
@@ -87,16 +89,41 @@ function SettingsProfileSidebar({
           )}
         </div>
       </div>
+
       {showNovoServico && onNovoServico && (
         <Button
           size="sm"
-          className="mt-2 flex w-full items-center gap-2 bg-[#0e1629] text-white hover:opacity-90"
+          className="flex w-full items-center gap-2 bg-[#0e1629] text-white hover:opacity-90"
           onClick={onNovoServico}
         >
           <Crown className="h-4 w-4" />
           Novo serviço
         </Button>
       )}
+
+      <button
+        type="button"
+        onClick={onLogout}
+        className="flex w-full items-center gap-2.5 rounded-lg border border-red-200 bg-red-50 px-3 py-2.5 text-sm font-medium text-red-600 transition-colors hover:bg-red-100 dark:border-red-900/40 dark:bg-red-950/20 dark:text-red-400 dark:hover:bg-red-950/40"
+      >
+        <svg
+          xmlns="http://www.w3.org/2000/svg"
+          width="16"
+          height="16"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="1.67"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          className="shrink-0"
+        >
+          <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" />
+          <polyline points="16 17 21 12 16 7" />
+          <line x1="21" y1="12" x2="9" y2="12" />
+        </svg>
+        Sair da conta
+      </button>
     </div>
   );
 }
@@ -502,7 +529,7 @@ function WhatsAppContent({
   status,
   loading,
 }: {
-  status: { status: string; phone?: string; error_message?: string } | null;
+  status: { status: string; phone?: string; last_connected?: string; error_message?: string } | null;
   loading?: boolean;
 }) {
   const toast = useToast();
@@ -511,6 +538,7 @@ function WhatsAppContent({
   >("disconnected");
   const [qrCode, setQrCode] = useState("");
   const [connectedPhone, setConnectedPhone] = useState("");
+  const [lastConnected, setLastConnected] = useState<string | null>(null);
   const [isGenerating, setIsGenerating] = useState(false);
   const statusCheckIntervalRef = useRef<NodeJS.Timeout | null>(null);
 
@@ -537,10 +565,13 @@ function WhatsAppContent({
       if (data.status === "connected") {
         setConnectionStatus("connected");
         setConnectedPhone(data.phone || "WhatsApp Conectado");
+        setLastConnected((data as any).last_connected ?? null);
         setQrCode("");
         if (statusCheckIntervalRef.current) {
           clearInterval(statusCheckIntervalRef.current);
         }
+      } else {
+        setLastConnected((data as any).last_connected ?? null);
       }
     } catch (error) {
       console.error("Erro ao verificar status:", error);
@@ -653,7 +684,9 @@ function WhatsAppContent({
                       WhatsApp Desconectado
                     </p>
                     <p className="text-xs text-[#727B8E] dark:text-[#8a94a6]">
-                      Conecte seu WhatsApp para começar
+                      {lastConnected
+                        ? `Última conexão: ${new Date(lastConnected).toLocaleString("pt-BR")}`
+                        : "Conecte seu WhatsApp para começar"}
                     </p>
                   </div>
                 </>
@@ -1652,7 +1685,7 @@ function IAPlaygroundContent() {
 }
 
 export default function ConfiguracoesPage() {
-  const { user } = useAuthContext();
+  const { user, logout } = useAuthContext();
   const petshopId = user?.petshop_id ?? 0;
   const toast = useToast();
 
@@ -1664,6 +1697,7 @@ export default function ConfiguracoesPage() {
   const [whatsappStatus, setWhatsappStatus] = useState<{
     status: string;
     phone?: string;
+    last_connected?: string;
     error_message?: string;
   } | null>(null);
   const [paymentStats, setPaymentStats] = useState<{
@@ -1763,7 +1797,8 @@ export default function ConfiguracoesPage() {
         setWhatsappStatus({
           status: data.status,
           phone: data.phone,
-          error_message: data.error_message,
+          last_connected: (data as any).last_connected,
+          error_message: (data as any).error_message,
         });
       } catch {
         setWhatsappStatus(null);
@@ -2108,6 +2143,7 @@ export default function ConfiguracoesPage() {
                 error={petshopError}
                 showNovoServico={activeTab === "servicos"}
                 onNovoServico={handleOpenNewServiceModal}
+                onLogout={logout}
               />
             </div>
 

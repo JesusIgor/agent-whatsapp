@@ -375,13 +375,15 @@ function ChatPageContent() {
       ),
     );
 
-    if (useRealApi && selectedConversation.phone) {
+    if (selectedConversation.phone) {
       try {
         await whatsappService.sendMessage({
           to: selectedConversation.phone,
           message,
         });
-      } catch {}
+      } catch (err) {
+        console.error("[Chat] Failed to send via WhatsApp:", err);
+      }
     }
 
     if (isAiActive && !useRealApi) {
