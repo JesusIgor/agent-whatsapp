@@ -16,6 +16,10 @@ def build_booking_prompt(context: dict, router_ctx: dict) -> str:
     date_hint = router_ctx.get("date_mentioned")
     selected_time = router_ctx.get("selected_time")
 
+    # Auto-resolve: se o cliente tem apenas 1 pet, usa ele automaticamente
+    if not active_pet and len(pets) == 1:
+        active_pet = pets[0]["name"]
+
     # Pets com detalhes
     if pets:
         pets_lines = " | ".join(
@@ -46,23 +50,33 @@ def build_booking_prompt(context: dict, router_ctx: dict) -> str:
             price = f"R${s['price']}"
         else:
             price = "a consultar"
-        svc_lines.append(f"  • {s['name']} (id={s['id']}): {price} — {s.get('duration_min','?')} min")
+        svc_lines.append(
+            f"  • {s['name']} (id={s['id']}): {price} — {s.get('duration_min','?')} min"
+        )
 
-    hours_lines = " | ".join(f"{d}: {h}" for d, h in business_hours.items()) or "não informado"
+    hours_lines = (
+        " | ".join(f"{d}: {h}" for d, h in business_hours.items()) or "não informado"
+    )
 
     # Regra do pet
     if pet_count == 0:
         pet_rule = "⚠️ Cliente sem pets cadastrados. Oriente-o a cadastrar um pet antes de prosseguir com o agendamento."
     elif pet_count == 1:
-        pet_rule = f"Cliente tem apenas {pets[0]['name']} (id={pets[0]['id']}). Assuma que o serviço é para ele sem perguntar."
+        pet_rule = f"Cliente tem apenas {pets[0]['name']} (id={pets[0]['id']}). Assuma que o serviço é para ele sem perguntar. Se o cliente mencionar OUTRO nome de pet que NÃO seja {pets[0]['name']}, esse pet NÃO existe — inicie o cadastro."
     else:
         nomes = ", ".join(p["name"] for p in pets)
-        pet_rule = f"Cliente tem {pet_count} pets ({nomes}). Pergunte para qual deles é o serviço antes de continuar."
+        pet_rule = f"Cliente tem {pet_count} pets cadastrados: {nomes}. Se o cliente mencionar um nome que NÃO está nesta lista, esse pet NÃO existe — inicie o cadastro."
 
     # Estado atual
+    size_map = {"small": "pequeno", "medium": "médio", "large": "grande"}
     estado = []
     if active_pet:
-        estado.append(f"Pet em foco: {active_pet}")
+        if active_pet_size:
+            estado.append(
+                f"Pet em foco: {active_pet} (porte {size_map.get(active_pet_size, active_pet_size)})"
+            )
+        else:
+            estado.append(f"Pet em foco: {active_pet} (porte NÃO definido)")
     if service:
         estado.append(f"Serviço em discussão: {service}")
     if date_hint:
@@ -100,9 +114,18 @@ PASSO 1 — SERVIÇO
 
 PASSO 2 — PET
 • Siga a regra do pet acima
-• ANTES de continuar, verifique se o pet tem espécie e porte preenchidos (chame get_client_pets)
-• Se o pet estiver com cadastro incompleto (sem espécie ou sem porte): informe o cliente que precisa completar o cadastro antes de agendar, diga quais campos faltam e peça que ele atualize
-• NÃO prossiga para data/horário com pet incompleto
+• ⚠️ REGRA CRÍTICA: Compare o nome do pet mencionado pelo cliente com a lista de PETS DO CLIENTE acima.
+  Se o nome NÃO está na lista → o pet NÃO existe no sistema. Informe ao cliente que esse pet ainda não está cadastrado e inicie o cadastro:
+  1. Pergunte o porte (pequeno, médio ou grande) PRIMEIRO
+  2. Após o porte, analise o que o cliente JÁ informou no histórico (nome, espécie, raça). Pergunte APENAS os campos que ainda faltam — NUNCA repita uma pergunta cujo dado já foi mencionado.
+     Exemplo: se o cliente disse "o Liam" → nome já é conhecido. Se disse "meu pastor alemão" → espécie (cachorro) e raça (Pastor Alemão) já são conhecidos.
+  3. Chame create_pet com os 4 campos (nome, espécie, raça, porte)
+  4. Só após o cadastro, retome o agendamento
+  NUNCA prossiga com agendamento para um pet que não está na lista de pets cadastrados.
+• Se o pet JÁ tem porte definido no contexto (ex: "porte small", "porte medium", "porte large") → use direto. NÃO chame set_pet_size — o porte já é conhecido.
+• Se o pet estiver SEM PORTE (size vazio ou null): PARE o fluxo. Pergunte o porte (pequeno, médio ou grande), chame set_pet_size para confirmar, e SÓ continue após confirmação.
+• Se o pet estiver sem espécie: informe o cliente que precisa completar o cadastro
+• NÃO prossiga para data/horário com pet sem porte definido
 • Com pet completo e porte conhecido, mostre o preço correto para aquele porte
 
 PASSO 3 — DATA E HORÁRIO
@@ -128,6 +151,23 @@ PASSO 5 — PÓS-AGENDAMENTO
 • Confirme de forma natural que o agendamento foi feito
 • Pergunte se o cliente quer agendar mais alguma coisa
 
+━━━ REMARCAÇÃO / CANCELAMENTO ━━━
+Quando o cliente quiser REMARCAR (trocar data/horário de um agendamento existente):
+1. Chame get_upcoming_appointments para listar os agendamentos ativos
+2. Identifique qual agendamento o cliente quer remarcar (se houver mais de um, pergunte qual)
+3. Chame cancel_appointment com o ID do agendamento antigo
+4. Inicie o fluxo de novo agendamento (PASSO 3 em diante) para o mesmo serviço e pet
+5. NUNCA tente remarcar sem cancelar o antigo primeiro
+
+Quando o cliente quiser CANCELAR (sem reagendar):
+1. Chame get_upcoming_appointments para listar os agendamentos ativos
+2. Confirme com o cliente qual agendamento deseja cancelar
+3. Chame cancel_appointment com o ID do agendamento
+4. Confirme o cancelamento de forma natural
+
+⚠️ IMPORTANTE: para cancelar ou remarcar, você PRECISA do appointment_id.
+Sempre chame get_upcoming_appointments primeiro para obtê-lo. NUNCA invente IDs.
+
 ━━━ SE AWAITING_CONFIRMATION = TRUE ━━━
 O resumo já foi enviado. NÃO reenvie o resumo.
 • Resposta afirmativa do cliente ("sim", "pode ser", "confirmo", "isso", "ok") →
@@ -135,7 +175,7 @@ O resumo já foi enviado. NÃO reenvie o resumo.
   2. Chame get_available_times com essa data para obter o schedule_id atualizado do horário {selected_time or "selecionado"}
   3. Com o schedule_id em mãos, chame create_appointment com confirmed=True
 • Pedido de correção → ajuste APENAS o item solicitado, não recomece do zero
-• Cancelamento → confirme que não vai agendar e pergunte se pode ajudar com outra coisa
+• Cancelamento ou remarcação → siga a seção REMARCAÇÃO / CANCELAMENTO acima
 
 ━━━ SE CREATE_APPOINTMENT FALHAR ━━━
 NUNCA diga ao cliente que houve "erro", "problema técnico" ou "dificuldades". Resolva silenciosamente.
