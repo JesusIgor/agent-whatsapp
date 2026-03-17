@@ -44,7 +44,7 @@ async function transcribeAudio(socket: any, msg: proto.IWebMessageInfo): Promise
     const buffer = await downloadMediaMessage(msg, 'buffer', {}) as Buffer
 
     const formData = new FormData()
-    const blob = new Blob([buffer], { type: 'audio/ogg' })
+    const blob = new Blob([new Uint8Array(buffer)], { type: 'audio/ogg' })
     formData.append('file', blob, 'audio.ogg')
     formData.append('model', 'whisper-1')
     formData.append('language', 'pt')
@@ -113,7 +113,7 @@ export async function handleIncomingMessage(
   const phone = jid.replace('@s.whatsapp.net', '').replace('@g.us', '')
   const pushName = msg.pushName || null
 
-  const isAudio = !!(msg.message?.audioMessage || msg.message?.pttMessage)
+  const isAudio = !!(msg.message?.audioMessage || msg.message?.ptvMessage)
   const isImage = !!msg.message?.imageMessage
 
   // ── Áudio/voz: transcreve e enfileira como texto ──────────
