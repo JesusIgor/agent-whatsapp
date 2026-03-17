@@ -1,6 +1,29 @@
 import { Request, Response } from 'express'
 import { prisma } from '../../lib/prisma'
 
+function formatTimeLabel(time: Date): string {
+  return `${String(time.getUTCHours()).padStart(2, '0')}:${String(
+    time.getUTCMinutes()
+  ).padStart(2, '0')}`
+}
+
+function parseDateWindow(date: string) {
+  const [year, month, day] = date.split('-').map(Number)
+  if (!year || !month || !day) return null
+
+  const base = new Date(Date.UTC(year, month - 1, day, 12, 0, 0))
+  if (Number.isNaN(base.getTime())) return null
+
+  const start = new Date(Date.UTC(year, month - 1, day, 0, 0, 0))
+  const end = new Date(Date.UTC(year, month - 1, day + 1, 0, 0, 0))
+
+  return {
+    weekday: base.getUTCDay(),
+    start,
+    end,
+  }
+}
+
 // Combina scheduledDate (Date) + schedule.startTime (Time) em ISO string com offset Brasília
 // startTime @db.Time é armazenado em UTC, mas representa horário local (BRT = UTC-3)
 function toScheduledAt(date: Date, startTime: Date): string {
@@ -23,6 +46,7 @@ function shapeAppointment(a: any) {
     client_id: a.clientId,
     client_name: a.client?.name ?? null,
     phone_client: a.client?.phone ?? null,
+    pet_id: a.petId,
     pet_name: a.pet?.name ?? null,
     pet_species: a.pet?.species ?? null,
     pet_breed: a.pet?.breed ?? null,
@@ -51,11 +75,22 @@ const appointmentInclude = {
 export async function listAppointments(req: Request, res: Response) {
   try {
     const companyId = req.user!.companyId
-    const { status, client_id, date_from, date_to } = req.query
+    const { status, client_id, pet_id, phone, date_from, date_to } = req.query
 
     const where: any = { companyId }
     if (status) where.status = status
     if (client_id) where.clientId = client_id
+    if (pet_id) where.petId = pet_id
+    if (phone) {
+      where.client = {
+        is: {
+          phone: {
+            contains: String(phone),
+            mode: 'insensitive',
+          },
+        },
+      }
+    }
     if (date_from || date_to) {
       where.scheduledDate = {}
       if (date_from) where.scheduledDate.gte = new Date(date_from as string)
@@ -72,6 +107,82 @@ export async function listAppointments(req: Request, res: Response) {
   } catch (error) {
     console.error('Error listing appointments:', error)
     res.status(500).json({ error: 'Failed to list appointments' })
+  }
+}
+
+// GET /appointments/available-slots
+export async function getAvailableSlots(req: Request, res: Response) {
+  try {
+    const companyId = req.user!.companyId
+    const date = String(req.query.date || '')
+    const parsed = parseDateWindow(date)
+
+    if (!parsed) {
+      return res.status(400).json({ error: 'date deve estar no formato YYYY-MM-DD' })
+    }
+
+    const schedules = await prisma.petshopSchedule.findMany({
+      where: {
+        companyId,
+        weekday: parsed.weekday,
+        isActive: true,
+      },
+      orderBy: { startTime: 'asc' },
+    })
+
+    if (schedules.length === 0) {
+      return res.json({
+        date,
+        available_slots: [],
+        total_available: 0,
+      })
+    }
+
+    const occupancy = await prisma.petshopAppointment.groupBy({
+      by: ['scheduleId'],
+      where: {
+        companyId,
+        scheduledDate: {
+          gte: parsed.start,
+          lt: parsed.end,
+        },
+        status: {
+          notIn: ['cancelled', 'no_show'],
+        },
+      },
+      _count: {
+        _all: true,
+      },
+    })
+
+    const occupiedBySchedule = new Map(
+      occupancy.map((entry) => [entry.scheduleId, entry._count._all])
+    )
+
+    const availableSlots = schedules
+      .map((schedule) => {
+        const occupied = occupiedBySchedule.get(schedule.id) ?? 0
+        const capacity = schedule.capacity ?? 1
+        const remainingCapacity = Math.max(capacity - occupied, 0)
+
+        return {
+          schedule_id: schedule.id,
+          time: formatTimeLabel(schedule.startTime),
+          end_time: formatTimeLabel(schedule.endTime),
+          capacity,
+          remaining_capacity: remainingCapacity,
+        }
+      })
+      .filter((slot) => slot.remaining_capacity > 0)
+
+    res.json({
+      date,
+      available_slots: availableSlots,
+      total_available: availableSlots.length,
+    })
+  } catch (error) {
+    console.error('Error getting available slots:', error)
+    res.status(500).json({ error: 'Failed to get available slots' })
   }
 }
 

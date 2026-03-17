@@ -24,8 +24,6 @@ export function CalendarHeader({
   const { pathname } = useLocation();
   const isCalendario =
     pathname === "/calendario" || pathname?.startsWith("/calendario/");
-  const isHotelCreche =
-    pathname === "/hotel-creche" || pathname?.startsWith("/hotel-creche/");
 
   const monthNames = [
     "Janeiro",
@@ -57,18 +55,6 @@ export function CalendarHeader({
           >
             <Crown className="h-4 w-4" />
             <span>Agenda</span>
-          </Link>
-          <div className="h-5 w-px bg-[#727B8E]/10" />
-          <Link
-            to="/hotel-creche"
-            className={cn(
-              "rounded-lg border px-3 py-1.5 text-sm font-medium transition-colors",
-              isHotelCreche
-                ? "border-[#727B8E]/10 bg-[#0e1629] dark:bg-[#2172e5] text-white"
-                : "border-transparent text-[#727B8E] dark:text-[#8a94a6] hover:text-[#434A57] dark:hover:text-[#f5f9fc]",
-            )}
-          >
-            Hotel/Creche
           </Link>
         </div>
 

@@ -40,7 +40,7 @@ import {
   paymentService,
 } from "@/services";
 import { useAuthContext } from "@/contexts/AuthContext";
-import type { Petshop } from "@/types";
+import type { Petshop, PetshopCustomCapacityHours } from "@/types";
 import type { Service } from "@/types";
 
 function SettingsProfileSidebar({
@@ -529,7 +529,12 @@ function WhatsAppContent({
   status,
   loading,
 }: {
-  status: { status: string; phone?: string; last_connected?: string; error_message?: string } | null;
+  status: {
+    status: string;
+    phone?: string;
+    last_connected?: string;
+    error_message?: string;
+  } | null;
   loading?: boolean;
 }) {
   const toast = useToast();
@@ -966,7 +971,7 @@ function HorariosContent({
       { open: string; close: string } | { closed: boolean }
     >;
     default_capacity_per_hour?: number;
-    custom_capacity_hours?: any;
+    custom_capacity_hours?: PetshopCustomCapacityHours;
   }) => Promise<void>;
 }) {
   const toast = useToast();
@@ -1017,20 +1022,94 @@ function HorariosContent({
     petshop?.defaultCapacityPerHour ?? 8,
   );
 
-  // Custom capacity hours state
-  const [customCapacities, setCustomCapacities] = useState<
-    { date: string; capacity: number }[]
-  >([]);
   const [hourlyCapacities, setHourlyCapacities] = useState<
     { day: string; hour: string; capacity: number }[]
   >([]);
-  const [customModalOpen, setCustomModalOpen] = useState(false);
-  const [customDate, setCustomDate] = useState("");
-  const [customCap, setCustomCap] = useState("");
   const [hourlyModalOpen, setHourlyModalOpen] = useState(false);
   const [hourlyDay, setHourlyDay] = useState("monday");
   const [hourlyHour, setHourlyHour] = useState("");
   const [hourlyCap, setHourlyCap] = useState("");
+
+  const dayLabelByKey = Object.fromEntries(
+    DIAS.map(({ key, label }) => [key, label]),
+  ) as Record<string, string>;
+
+  const sortHourlyCapacities = (
+    entries: { day: string; hour: string; capacity: number }[],
+  ) => {
+    const dayOrder = Object.fromEntries(
+      DIAS.map(({ key }, index) => [key, index]),
+    ) as Record<string, number>;
+
+    return [...entries].sort(
+      (left, right) =>
+        (dayOrder[left.day] ?? Number.MAX_SAFE_INTEGER) -
+          (dayOrder[right.day] ?? Number.MAX_SAFE_INTEGER) ||
+        left.hour.localeCompare(right.hour),
+    );
+  };
+
+  const parseTimeToMinutes = (value: string): number | null => {
+    const match = /^(\d{1,2}):(\d{2})$/.exec(value.trim());
+    if (!match) return null;
+
+    const hours = Number(match[1]);
+    const minutes = Number(match[2]);
+    if (
+      !Number.isInteger(hours) ||
+      !Number.isInteger(minutes) ||
+      hours < 0 ||
+      hours > 23 ||
+      minutes < 0 ||
+      minutes > 59
+    ) {
+      return null;
+    }
+
+    return hours * 60 + minutes;
+  };
+
+  const formatMinutesAsTime = (minutesFromMidnight: number) => {
+    const hours = Math.floor(minutesFromMidnight / 60);
+    const minutes = minutesFromMidnight % 60;
+    return `${String(hours).padStart(2, "0")}:${String(minutes).padStart(2, "0")}`;
+  };
+
+  const getHourlyOptionsForDay = (dayKey: string) => {
+    const dayConfig = hours[dayKey];
+    if (!dayConfig?.enabled) {
+      return [] as string[];
+    }
+
+    const openMinutes = parseTimeToMinutes(dayConfig.open);
+    const closeMinutes = parseTimeToMinutes(dayConfig.close);
+    if (
+      openMinutes === null ||
+      closeMinutes === null ||
+      openMinutes >= closeMinutes
+    ) {
+      return [] as string[];
+    }
+
+    const options: string[] = [];
+    for (
+      let startMinutes = openMinutes;
+      startMinutes < closeMinutes;
+      startMinutes += 60
+    ) {
+      options.push(formatMinutesAsTime(startMinutes));
+    }
+
+    return options;
+  };
+
+  const getFirstAvailableHourlyDay = () => {
+    return (
+      DIAS.find(({ key }) => getHourlyOptionsForDay(key).length > 0)?.key ??
+      DIAS[0]?.key ??
+      "monday"
+    );
+  };
 
   useEffect(() => {
     if (!petshop) return;
@@ -1062,21 +1141,8 @@ function HorariosContent({
     setHours(initial);
     setDefaultCapacity(petshop.defaultCapacityPerHour ?? 8);
 
-    // Load custom capacity hours
-    const custom = petshop.customCapacityHours as {
-      dates?: Record<string, number>;
-      hourly?: Record<string, Record<string, number>>;
-    } | null;
-    if (custom?.dates) {
-      setCustomCapacities(
-        Object.entries(custom.dates).map(([date, capacity]) => ({
-          date,
-          capacity: capacity as number,
-        })),
-      );
-    } else {
-      setCustomCapacities([]);
-    }
+    const custom =
+      petshop.customCapacityHours as PetshopCustomCapacityHours | null;
     if (custom?.hourly) {
       const hourly: { day: string; hour: string; capacity: number }[] = [];
       for (const [day, hours] of Object.entries(custom.hourly)) {
@@ -1086,11 +1152,26 @@ function HorariosContent({
           hourly.push({ day, hour, capacity });
         }
       }
-      setHourlyCapacities(hourly);
+      setHourlyCapacities(sortHourlyCapacities(hourly));
     } else {
       setHourlyCapacities([]);
     }
   }, [petshop]);
+
+  useEffect(() => {
+    const availableHours = getHourlyOptionsForDay(hourlyDay);
+
+    if (availableHours.length === 0) {
+      if (hourlyHour) {
+        setHourlyHour("");
+      }
+      return;
+    }
+
+    if (!availableHours.includes(hourlyHour)) {
+      setHourlyHour(availableHours[0]);
+    }
+  }, [hours, hourlyDay, hourlyHour]);
 
   const handleToggle = (key: string) => {
     setHours((prev) => ({
@@ -1107,31 +1188,38 @@ function HorariosContent({
     setHours((prev) => ({ ...prev, [key]: { ...prev[key], [field]: value } }));
   };
 
-  const handleAddCustomCapacity = () => {
-    if (!customDate || !customCap) return;
-    const cap = parseInt(customCap);
-    if (cap < 1) return;
-    setCustomCapacities((prev) => {
-      const without = prev.filter((c) => c.date !== customDate);
-      return [...without, { date: customDate, capacity: cap }];
-    });
-    setCustomModalOpen(false);
-    setCustomDate("");
-    setCustomCap("");
-  };
-
   const handleAddHourlyCapacity = () => {
-    if (!hourlyHour || !hourlyCap) return;
-    const cap = parseInt(hourlyCap);
-    if (cap < 1) return;
+    const availableHours = getHourlyOptionsForDay(hourlyDay);
+    const selectedHour = hourlyHour || availableHours[0];
+    const cap = parseInt(hourlyCap, 10);
+
+    if (!selectedHour || !availableHours.includes(selectedHour)) {
+      toast.warning(
+        "Horário indisponível",
+        "Escolha um dia com horário configurado para adicionar uma capacidade customizada.",
+      );
+      return;
+    }
+
+    if (!Number.isInteger(cap) || cap < 1) {
+      toast.warning(
+        "Capacidade inválida",
+        "Informe uma capacidade maior que zero para esse horário.",
+      );
+      return;
+    }
+
     setHourlyCapacities((prev) => {
       const without = prev.filter(
-        (h) => !(h.day === hourlyDay && h.hour === hourlyHour),
+        (h) => !(h.day === hourlyDay && h.hour === selectedHour),
       );
-      return [...without, { day: hourlyDay, hour: hourlyHour, capacity: cap }];
+      return sortHourlyCapacities([
+        ...without,
+        { day: hourlyDay, hour: selectedHour, capacity: cap },
+      ]);
     });
     setHourlyModalOpen(false);
-    setHourlyDay("monday");
+    setHourlyDay(getFirstAvailableHourlyDay());
     setHourlyHour("");
     setHourlyCap("");
   };
@@ -1150,12 +1238,12 @@ function HorariosContent({
           business_hours[key] = { closed: true };
         }
       });
-      const custom_capacity_hours = {
-        dates: Object.fromEntries(
-          customCapacities.map((c) => [c.date, c.capacity]),
-        ),
+      const custom_capacity_hours: PetshopCustomCapacityHours = {
         hourly: hourlyCapacities.reduce<Record<string, Record<string, number>>>(
           (acc, h) => {
+            if (!getHourlyOptionsForDay(h.day).includes(h.hour)) {
+              return acc;
+            }
             if (!acc[h.day]) acc[h.day] = {};
             acc[h.day][h.hour] = h.capacity;
             return acc;
@@ -1259,29 +1347,21 @@ function HorariosContent({
 
       <section>
         <h3 className="mb-4 text-base font-semibold text-[#434A57] dark:text-[#f5f9fc]">
-          Capacidades Customizadas (Opcional)
+          Capacidades Customizadas por Hora
         </h3>
         <p className="mb-4 text-sm text-[#727B8E] dark:text-[#8a94a6]">
-          Configure capacidades específicas para dias especiais ou horários
-          específicos dos dias da semana
+          A capacidade padrão será aplicada a todos os horários abertos do
+          petshop. Se necessário, você pode sobrescrever horários específicos de
+          um weekday.
         </p>
         <div className="flex gap-3">
           <button
             type="button"
             onClick={() => {
-              setCustomDate("");
-              setCustomCap("");
-              setCustomModalOpen(true);
-            }}
-            className="flex items-center gap-2 rounded-lg border border-[#727B8E]/10 bg-white dark:border-[#40485A] dark:bg-[#1A1B1D] px-4 py-2 text-sm text-[#727B8E] dark:text-[#8a94a6] hover:bg-[#F4F6F9] dark:hover:bg-[#212225] transition-colors"
-          >
-            + Adicionar Dia Específico
-          </button>
-          <button
-            type="button"
-            onClick={() => {
-              setHourlyDay("monday");
-              setHourlyHour("");
+              const nextDay = getFirstAvailableHourlyDay();
+              const nextHours = getHourlyOptionsForDay(nextDay);
+              setHourlyDay(nextDay);
+              setHourlyHour(nextHours[0] ?? "");
               setHourlyCap("");
               setHourlyModalOpen(true);
             }}
@@ -1290,36 +1370,6 @@ function HorariosContent({
             + Adicionar Hora do Dia da Semana
           </button>
         </div>
-        {customCapacities.length > 0 && (
-          <div className="mt-4 space-y-2">
-            {customCapacities.map((cap) => (
-              <div
-                key={cap.date}
-                className="flex items-center justify-between rounded-lg border border-[#727B8E]/10 bg-[#F4F6F9] dark:border-[#40485A] dark:bg-[#212225] px-4 py-3"
-              >
-                <div>
-                  <span className="text-sm font-medium text-[#434A57] dark:text-[#f5f9fc]">
-                    {cap.date}
-                  </span>
-                  <p className="text-xs text-[#727B8E] dark:text-[#8a94a6]">
-                    {cap.capacity} serviços por hora
-                  </p>
-                </div>
-                <button
-                  type="button"
-                  onClick={() =>
-                    setCustomCapacities((prev) =>
-                      prev.filter((c) => c.date !== cap.date),
-                    )
-                  }
-                  className="text-red-500 hover:text-red-700 transition-colors"
-                >
-                  <X className="h-4 w-4" />
-                </button>
-              </div>
-            ))}
-          </div>
-        )}
         {hourlyCapacities.length > 0 && (
           <div className="mt-4 space-y-2">
             <p className="text-xs font-medium text-[#434A57] dark:text-[#f5f9fc]">
@@ -1332,7 +1382,8 @@ function HorariosContent({
                   className="inline-flex items-center gap-2 rounded-lg border border-[#1E62EC]/20 bg-[#1E62EC]/10 px-2 py-1"
                 >
                   <span className="text-xs font-medium text-[#1E62EC]">
-                    {h.day} {h.hour} • {h.capacity} serviços
+                    {dayLabelByKey[h.day] ?? h.day} {h.hour} • {h.capacity}{" "}
+                    serviços
                   </span>
                   <button
                     type="button"
@@ -1390,6 +1441,22 @@ function HorariosContent({
               });
             }
             setHours(initial);
+            setDefaultCapacity(petshop.defaultCapacityPerHour ?? 8);
+            const custom =
+              petshop.customCapacityHours as PetshopCustomCapacityHours | null;
+            if (custom?.hourly) {
+              const hourly = Object.entries(custom.hourly).flatMap(
+                ([day, dayHours]) =>
+                  Object.entries(dayHours).map(([hour, capacity]) => ({
+                    day,
+                    hour,
+                    capacity,
+                  })),
+              );
+              setHourlyCapacities(sortHourlyCapacities(hourly));
+            } else {
+              setHourlyCapacities([]);
+            }
           }}
         >
           Cancelar
@@ -1405,38 +1472,6 @@ function HorariosContent({
           )}
         </Button>
       </div>
-
-      {/* Modal - Adicionar Dia Específico */}
-      <Modal
-        isOpen={customModalOpen}
-        onClose={() => setCustomModalOpen(false)}
-        title="Adicionar Dia Específico"
-        className="max-w-[400px]"
-      >
-        <div className="flex flex-col gap-4">
-          <Input
-            label="Data"
-            type="date"
-            value={customDate}
-            onChange={(e) => setCustomDate(e.target.value)}
-            min={new Date().toISOString().split("T")[0]}
-          />
-          <Input
-            label="Capacidade (serviços/hora)"
-            type="number"
-            placeholder="10"
-            value={customCap}
-            onChange={(e) => setCustomCap(e.target.value)}
-            min="1"
-          />
-          <div className="flex justify-end gap-2">
-            <Button variant="outline" onClick={() => setCustomModalOpen(false)}>
-              Cancelar
-            </Button>
-            <Button onClick={handleAddCustomCapacity}>Adicionar</Button>
-          </div>
-        </div>
-      </Modal>
 
       {/* Modal - Adicionar Capacidade por Hora */}
       <Modal
@@ -1462,12 +1497,30 @@ function HorariosContent({
               ))}
             </select>
           </div>
-          <Input
-            label="Hora"
-            type="time"
-            value={hourlyHour}
-            onChange={(e) => setHourlyHour(e.target.value)}
-          />
+          <div>
+            <label className="mb-1 block text-sm font-medium text-[#434A57] dark:text-[#f5f9fc]">
+              Hora
+            </label>
+            <select
+              value={hourlyHour}
+              onChange={(e) => setHourlyHour(e.target.value)}
+              disabled={getHourlyOptionsForDay(hourlyDay).length === 0}
+              className="w-full rounded-lg border border-[#727B8E]/20 bg-white px-3 py-2 text-sm text-[#434A57] disabled:cursor-not-allowed disabled:opacity-60 dark:border-[#40485A] dark:bg-[#1A1B1D] dark:text-[#f5f9fc]"
+            >
+              {getHourlyOptionsForDay(hourlyDay).length > 0 ? (
+                getHourlyOptionsForDay(hourlyDay).map((hour) => (
+                  <option key={hour} value={hour}>
+                    {hour}
+                  </option>
+                ))
+              ) : (
+                <option value="">Nenhum horário disponível</option>
+              )}
+            </select>
+            <p className="mt-1 text-xs text-[#727B8E] dark:text-[#8a94a6]">
+              Apenas horários válidos para o weekday selecionado são enviados.
+            </p>
+          </div>
           <Input
             label="Capacidade (serviços/hora)"
             type="number"
@@ -1477,10 +1530,20 @@ function HorariosContent({
             min="1"
           />
           <div className="flex justify-end gap-2">
-            <Button variant="outline" onClick={() => setHourlyModalOpen(false)}>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => setHourlyModalOpen(false)}
+            >
               Cancelar
             </Button>
-            <Button onClick={handleAddHourlyCapacity}>Adicionar</Button>
+            <Button
+              type="button"
+              onClick={handleAddHourlyCapacity}
+              disabled={getHourlyOptionsForDay(hourlyDay).length === 0}
+            >
+              Adicionar
+            </Button>
           </div>
         </div>
       </Modal>
@@ -1866,7 +1929,7 @@ export default function ConfiguracoesPage() {
         { open: string; close: string } | { closed: boolean }
       >;
       default_capacity_per_hour?: number;
-      custom_capacity_hours?: any;
+      custom_capacity_hours?: PetshopCustomCapacityHours;
     }) => {
       if (!petshopId) return;
       try {

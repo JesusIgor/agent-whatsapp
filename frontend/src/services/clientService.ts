@@ -1,4 +1,5 @@
 import { api } from '@/lib/api'
+import { normalizePhoneForStorage } from '@/lib/masks'
 import type {
   Client,
   ClientCreate,
@@ -36,7 +37,12 @@ export const clientService = {
   },
 
   async createClient(clientData: ClientCreate): Promise<Client> {
-    const response = await api.post<Client>('/clients', clientData)
+    const payload = {
+      ...clientData,
+      phone: normalizePhoneForStorage(clientData.phone),
+    }
+
+    const response = await api.post<Client>('/clients', payload)
     return response.data
   },
 
@@ -44,10 +50,28 @@ export const clientService = {
     clientId: string,
     updates: ClientUpdate
   ): Promise<Client> {
+    const payload = {
+      ...updates,
+      ...(updates.phone
+        ? { phone: normalizePhoneForStorage(updates.phone) }
+        : {}),
+    }
+
     const response = await api.put<Client>(
       `/clients/${clientId}`,
-      updates
+      payload
     )
+    return response.data
+  },
+
+  async deleteClient(clientId: string): Promise<{
+    success: boolean
+    client_id: string
+  }> {
+    const response = await api.delete<{
+      success: boolean
+      client_id: string
+    }>(`/clients/${clientId}`)
     return response.data
   },
 

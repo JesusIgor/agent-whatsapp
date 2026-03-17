@@ -6,6 +6,7 @@ import {
   getClientDetails,
   createClient,
   updateClient,
+  deleteClient,
   getClientConversations,
   getClientPets,
   getClientContext,
@@ -35,6 +36,9 @@ router.get('/:clientId', getClientDetails)
 
 // PUT /clients/:clientId - Update client
 router.put('/:clientId', updateClient)
+
+// DELETE /clients/:clientId - Delete client
+router.delete('/:clientId', deleteClient)
 
 // GET /clients/:clientId/conversations - Get client conversations
 router.get('/:clientId/conversations', getClientConversations)

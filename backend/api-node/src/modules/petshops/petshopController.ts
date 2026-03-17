@@ -1,56 +1,193 @@
 import { Request, Response } from 'express'
 import { prisma } from '../../lib/prisma'
 
+type BusinessHourEntry =
+  | string
+  | {
+      open?: string
+      close?: string
+      closed?: boolean
+    }
+  | null
+  | undefined
+
+type CustomCapacityHours = {
+  hourly?: Record<string, Record<string, number>>
+} | null
+
 const DAY_MAP: Record<string, number> = {
   domingo: 0,
   segunda: 1,
+  monday: 1,
   terca: 2,
   'terça': 2,
+  tuesday: 2,
   quarta: 3,
+  wednesday: 3,
   quinta: 4,
+  thursday: 4,
   sexta: 5,
+  friday: 5,
   sabado: 6,
   'sábado': 6,
+  saturday: 6,
+  sunday: 0,
 }
 
 async function syncBusinessHoursToSchedules(
   companyId: number,
   businessHours: Record<string, any>,
-  capacity: number
+  capacity: number,
+  customCapacityHours?: CustomCapacityHours
 ): Promise<void> {
   const pad = (n: number) => String(n).padStart(2, '0')
 
+  const parseTimeToMinutes = (value: unknown): number | null => {
+    if (typeof value !== 'string') return null
+
+    const match = /^(\d{1,2}):(\d{2})$/.exec(value.trim())
+    if (!match) return null
+
+    const hours = Number(match[1])
+    const minutes = Number(match[2])
+    if (
+      !Number.isInteger(hours) ||
+      !Number.isInteger(minutes) ||
+      hours < 0 ||
+      hours > 23 ||
+      minutes < 0 ||
+      minutes > 59
+    ) {
+      return null
+    }
+
+    return hours * 60 + minutes
+  }
+
+  const formatTimeKey = (minutesFromMidnight: number) => {
+    const hours = Math.floor(minutesFromMidnight / 60)
+    const minutes = minutesFromMidnight % 60
+    return `${pad(hours)}:${pad(minutes)}`
+  }
+
+  const normalizeTimeKey = (value: unknown): string | null => {
+    if (typeof value === 'number') {
+      return formatTimeKey(value)
+    }
+
+    const minutes = parseTimeToMinutes(value)
+    if (minutes === null) return null
+
+    return formatTimeKey(minutes)
+  }
+
+  const buildUtcTime = (minutesFromMidnight: number) => {
+    const hours = Math.floor(minutesFromMidnight / 60)
+    const minutes = minutesFromMidnight % 60
+    return new Date(Date.UTC(1970, 0, 1, hours, minutes, 0))
+  }
+
+  const defaultSlotCapacity = (() => {
+    const parsedCapacity = Number(capacity)
+    if (!Number.isFinite(parsedCapacity) || parsedCapacity < 1) {
+      return 1
+    }
+
+    return Math.trunc(parsedCapacity)
+  })()
+
+  const normalizedHourlyOverrides = Object.entries(customCapacityHours?.hourly ?? {}).reduce<
+    Record<string, Record<string, number>>
+  >((acc, [day, hours]) => {
+    if (!hours || typeof hours !== 'object') return acc
+
+    const normalizedDay = day.toLowerCase()
+    const normalizedHours = Object.entries(hours as Record<string, number>).reduce<Record<string, number>>(
+      (hourAcc, [hour, slotCapacity]) => {
+        const normalizedHour = normalizeTimeKey(hour)
+        const parsedCapacity = Number(slotCapacity)
+
+        if (!normalizedHour || !Number.isFinite(parsedCapacity) || parsedCapacity < 1) {
+          return hourAcc
+        }
+
+        hourAcc[normalizedHour] = Math.trunc(parsedCapacity)
+        return hourAcc
+      },
+      {}
+    )
+
+    if (Object.keys(normalizedHours).length > 0) {
+      acc[normalizedDay] = normalizedHours
+    }
+
+    return acc
+  }, {})
+
+  const getTimeRange = (
+    entry: BusinessHourEntry
+  ): { openMinutes: number; closeMinutes: number } | null => {
+    if (!entry) return null
+
+    if (typeof entry === 'string' && entry.includes('-')) {
+      const [openValue, closeValue] = entry.split('-') as [string, string]
+      const openMinutes = parseTimeToMinutes(openValue)
+      const closeMinutes = parseTimeToMinutes(closeValue)
+
+      if (openMinutes === null || closeMinutes === null || openMinutes >= closeMinutes) {
+        return null
+      }
+
+      return { openMinutes, closeMinutes }
+    }
+
+    if (typeof entry === 'object') {
+      if (entry.closed) return null
+
+      const openMinutes = parseTimeToMinutes(entry.open)
+      const closeMinutes = parseTimeToMinutes(entry.close)
+
+      if (openMinutes === null || closeMinutes === null || openMinutes >= closeMinutes) {
+        return null
+      }
+
+      return { openMinutes, closeMinutes }
+    }
+
+    return null
+  }
+
   for (const [day, entry] of Object.entries(businessHours)) {
-    const weekday = DAY_MAP[day.toLowerCase()]
+    const normalizedDay = day.toLowerCase()
+    const weekday = DAY_MAP[normalizedDay]
     if (weekday === undefined) continue
 
     // Remove existing slots for this weekday
     await prisma.petshopSchedule.deleteMany({ where: { companyId, weekday } })
 
-    // Support both string ("09:00-18:00") and object ({ open, close }) formats
-    let openH: number, closeH: number
-    if (typeof entry === 'string' && entry.includes('-')) {
-      const [openStr, closeStr] = entry.split('-') as [string, string]
-      openH = parseInt(openStr.split(':')[0]!, 10)
-      closeH = parseInt(closeStr.split(':')[0]!, 10)
-    } else if (entry && typeof entry === 'object' && 'open' in entry && 'close' in entry) {
-      openH = parseInt(String(entry.open).split(':')[0]!, 10)
-      closeH = parseInt(String(entry.close).split(':')[0]!, 10)
-    } else {
-      continue // Day closed or invalid
-    }
+    const timeRange = getTimeRange(entry)
+    if (!timeRange) continue
 
-    if (isNaN(openH) || isNaN(closeH) || openH >= closeH) continue
-
+    const hourlyOverrides = normalizedHourlyOverrides[normalizedDay] ?? {}
     const slots = []
-    for (let h = openH; h < closeH; h++) {
-      // Store as UTC time strings — treated as local BRT hours (UTC-3)
+
+    for (
+      let startMinutes = timeRange.openMinutes;
+      startMinutes < timeRange.closeMinutes;
+      startMinutes += 60
+    ) {
+      const endMinutes = Math.min(startMinutes + 60, timeRange.closeMinutes)
+      if (endMinutes <= startMinutes) continue
+
+      const overrideKey = formatTimeKey(startMinutes)
+      const slotCapacity = hourlyOverrides[overrideKey] ?? defaultSlotCapacity
+
       slots.push({
         companyId,
         weekday,
-        startTime: new Date(`1970-01-01T${pad(h)}:00:00Z`),
-        endTime: new Date(`1970-01-01T${pad(h + 1)}:00:00Z`),
-        capacity,
+        startTime: buildUtcTime(startMinutes),
+        endTime: buildUtcTime(endMinutes),
+        capacity: slotCapacity,
         isActive: true,
       })
     }
@@ -127,6 +264,7 @@ export async function createPetshop(req: Request, res: Response) {
       assistant_name,
       default_capacity_per_hour,
       business_hours,
+      custom_capacity_hours,
     } = req.body
 
     if (!company_id || !phone) {
@@ -155,9 +293,21 @@ export async function createPetshop(req: Request, res: Response) {
         assistantName: assistant_name,
         defaultCapacityPerHour: default_capacity_per_hour || 3,
         businessHours: business_hours,
+        customCapacityHours: custom_capacity_hours,
         isActive: true,
       },
     })
+
+    if (business_hours) {
+      await syncBusinessHoursToSchedules(
+        company_id,
+        business_hours,
+        default_capacity_per_hour || 3,
+        custom_capacity_hours
+      ).catch((err) =>
+        console.error('[createPetshop] Failed to sync business hours:', err)
+      )
+    }
 
     res.status(201).json(petshop)
   } catch (error) {
@@ -223,11 +373,27 @@ export async function updatePetshop(req: Request, res: Response) {
     })
 
     // Sync business hours to petshop_schedules table
-    if (business_hours !== undefined) {
+    if (
+      business_hours !== undefined ||
+      default_capacity_per_hour !== undefined ||
+      custom_capacity_hours !== undefined
+    ) {
+      const effectiveBusinessHours =
+        business_hours ?? (petshop.businessHours as Record<string, any> | null)
       const capacityPerHour = petshop.defaultCapacityPerHour ?? 3
-      await syncBusinessHoursToSchedules(existing.companyId, business_hours, capacityPerHour).catch(
-        (err) => console.error('[updatePetshop] Failed to sync business hours:', err)
-      )
+      const effectiveCustomCapacityHours =
+        custom_capacity_hours ?? (petshop.customCapacityHours as CustomCapacityHours)
+
+      if (effectiveBusinessHours) {
+        await syncBusinessHoursToSchedules(
+          existing.companyId,
+          effectiveBusinessHours,
+          capacityPerHour,
+          effectiveCustomCapacityHours
+        ).catch((err) =>
+          console.error('[updatePetshop] Failed to sync business hours:', err)
+        )
+      }
     }
 
     res.json(petshop)

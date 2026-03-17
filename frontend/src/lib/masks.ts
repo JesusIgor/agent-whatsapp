@@ -1,10 +1,50 @@
 // ── Phone ────────────────────────────────────────────────────────────────────
+function shouldPreservePhoneIdentifier(value: string): boolean {
+  return /@/.test(value) || /[a-z]/i.test(value)
+}
+
+function getPhoneDigitsForDisplay(value: string): string {
+  const digits = value.replace(/\D/g, '')
+  const localDigits =
+    digits.startsWith('55') && digits.length > 11 ? digits.slice(2) : digits
+
+  return localDigits.slice(0, 11)
+}
+
 export function maskPhone(value: string): string {
-  const digits = value.replace(/\D/g, '').slice(0, 11)
+  const normalized = value.trim()
+  if (!normalized || shouldPreservePhoneIdentifier(normalized)) {
+    return normalized
+  }
+
+  const digits = getPhoneDigitsForDisplay(value)
   if (digits.length <= 10) {
     return digits.replace(/(\d{2})(\d{4})(\d{0,4})/, '($1) $2-$3').trim()
   }
   return digits.replace(/(\d{2})(\d{5})(\d{0,4})/, '($1) $2-$3').trim()
+}
+
+export function normalizePhoneForStorage(value: string): string {
+  const normalized = value.trim()
+
+  if (!normalized) return ''
+  if (shouldPreservePhoneIdentifier(normalized)) return normalized
+
+  const localDigits = getPhoneDigitsForDisplay(value)
+
+  if (!localDigits) return ''
+
+  return `55${localDigits}`
+}
+
+export function formatPhoneForDisplay(value: string): string {
+  const normalized = value.trim()
+
+  if (!normalized || shouldPreservePhoneIdentifier(normalized)) {
+    return normalized
+  }
+
+  return maskPhone(normalized)
 }
 
 // ── CEP ──────────────────────────────────────────────────────────────────────

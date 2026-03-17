@@ -3,9 +3,12 @@ export interface Appointment {
   client_id: string
   client_name: string
   phone_client: string
+  pet_id?: string
   professional_id?: string
   professional_name?: string
   specialty?: string
+  service_id?: number
+  schedule_id?: number
   scheduled_at: string
   price: number
   status: string
@@ -19,12 +22,16 @@ export interface Appointment {
   recurrence_rule?: string
   parent_id?: string
   is_recurring: boolean
+  notes?: string
+  cancelled_at?: string
+  cancel_reason?: string
   created_at: string
 }
 
 export interface AppointmentSchedule {
   client_id: string
   scheduled_at: string
+  schedule_id?: number
   payment_method?: string
   origin_channel?: string
   pet_id?: string
@@ -90,8 +97,16 @@ export interface ConfirmAppointmentRequest {
   notes?: string
 }
 
+export interface AvailableSlot {
+  schedule_id: number
+  time: string
+  end_time: string
+  capacity: number
+  remaining_capacity: number
+}
+
 export interface AvailableSlotsResponse {
-  professional_id: string
-  available_slots: string[]
+  date: string
+  available_slots: AvailableSlot[]
   total_available: number
 }

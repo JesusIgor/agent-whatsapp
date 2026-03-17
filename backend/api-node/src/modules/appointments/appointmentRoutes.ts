@@ -1,6 +1,7 @@
 import { Router } from 'express'
 import { verifyToken } from '../../middleware/authMiddleware'
 import {
+  getAvailableSlots,
   listAppointments,
   getAppointment,
   scheduleAppointment,
@@ -15,6 +16,7 @@ const router = Router()
 router.use(verifyToken)
 
 router.get('/', listAppointments)
+router.get('/available-slots', getAvailableSlots)
 router.post('/schedule', scheduleAppointment)
 router.get('/:id', getAppointment)
 router.put('/:id', updateAppointment)

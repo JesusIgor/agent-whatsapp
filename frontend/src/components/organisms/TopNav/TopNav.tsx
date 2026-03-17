@@ -15,7 +15,9 @@ import { useTheme } from "@/contexts/ThemeContext";
 import { whatsappService } from "@/services";
 
 function WhatsAppStatusDot() {
-  const [status, setStatus] = useState<"connected" | "disconnected" | "loading">("loading");
+  const [status, setStatus] = useState<
+    "connected" | "disconnected" | "loading"
+  >("loading");
   const [lastConnected, setLastConnected] = useState<string | null>(null);
 
   useEffect(() => {
@@ -34,7 +36,10 @@ function WhatsAppStatusDot() {
 
     check();
     const interval = setInterval(check, 30000);
-    return () => { cancelled = true; clearInterval(interval); };
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+    };
   }, []);
 
   const isConnected = status === "connected";
@@ -59,7 +64,7 @@ function WhatsAppStatusDot() {
                 ? "bg-[#727B8E]/40"
                 : isConnected
                   ? "bg-[#3CD057] shadow-[0_0_6px_1px_#3CD057]"
-                  : "bg-[#727B8E]"
+                  : "bg-[#727B8E]",
             )}
           />
         </div>
@@ -138,9 +143,6 @@ export function TopNav({ linked = true }: TopNavProps) {
             const isActive =
               pathname === href ||
               pathname?.startsWith(`${href}/`) ||
-              (href === "/calendario" &&
-                (pathname === "/hotel-creche" ||
-                  pathname?.startsWith("/hotel-creche/"))) ||
               (href === "/chat" &&
                 (pathname === "/pipeline" ||
                   pathname?.startsWith("/pipeline/")));

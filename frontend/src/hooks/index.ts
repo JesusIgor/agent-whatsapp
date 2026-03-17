@@ -20,6 +20,7 @@ export * from './useWebSocket'
 export * from './usePayment'
 export * from './useNotifications'
 export * from './useBusinessHours'
+export * from './useAvailableScheduleSlots'
 export * from './useToast'
 export * from './useSettings'
 

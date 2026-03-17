@@ -16,6 +16,15 @@ export interface PetshopCreate {
       closed?: boolean
     }
   }
+  custom_capacity_hours?: PetshopCustomCapacityHours
+}
+
+export interface PetshopCustomCapacityHours {
+  hourly?: {
+    [weekday: string]: {
+      [hour: string]: number
+    }
+  }
 }
 
 export interface Petshop {
@@ -38,7 +47,7 @@ export interface Petshop {
     }
   } | null
   defaultCapacityPerHour?: number | null
-  customCapacityHours?: any
+  customCapacityHours?: PetshopCustomCapacityHours | null
   isActive?: boolean | null
   createdAt?: string
   updatedAt?: string
@@ -70,7 +79,7 @@ export interface PetshopUpdate {
       closed?: boolean
     }
   }
-  custom_capacity_hours?: any
+  custom_capacity_hours?: PetshopCustomCapacityHours
   company_name?: string
   is_active?: boolean
 }
