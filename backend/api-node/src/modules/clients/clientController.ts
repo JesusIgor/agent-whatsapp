@@ -1,6 +1,20 @@
 import { Request, Response } from 'express'
 import { prisma } from '../../lib/prisma'
 
+function shapeClient(client: any) {
+  const { _count, ...rest } = client
+
+  return {
+    ...rest,
+    is_active: client.isActive,
+    total_appointments:
+      _count?.appointments ?? client.total_appointments ?? undefined,
+    total_pets: _count?.pets ?? client.total_pets ?? undefined,
+    total_conversations:
+      _count?.conversations ?? client.total_conversations ?? undefined,
+  }
+}
+
 // GET /clients - List all clients for the company
 export async function listClients(req: Request, res: Response) {
   try {
@@ -31,11 +45,12 @@ export async function listClients(req: Request, res: Response) {
       take: parseInt(limit as string),
       include: {
         conversations: { take: 1, orderBy: { startedAt: 'desc' } },
+        _count: { select: { appointments: true, pets: true, conversations: true } },
       },
       orderBy: { lastMessageAt: 'desc' },
     })
 
-    res.json(clients)
+    res.json(clients.map(shapeClient))
   } catch (error) {
     console.error('Error listing clients:', error)
     res.status(500).json({ error: 'Failed to list clients' })
@@ -103,7 +118,7 @@ export async function getClientDetails(req: Request, res: Response) {
     })
 
     res.json({
-      ...client,
+      ...shapeClient(client),
       conversations,
       pets,
       appointments,
@@ -118,26 +133,36 @@ export async function getClientDetails(req: Request, res: Response) {
 export async function createClient(req: Request, res: Response) {
   try {
     const companyId = req.user!.companyId
-    const { phone, name, email, companyName, conversationStage, notes } = req.body
+    const {
+      phone,
+      name,
+      email,
+      companyName,
+      conversationStage,
+      notes,
+      is_active,
+    } = req.body
 
-    if (!phone) {
+    const phoneValue = String(phone ?? '').trim()
+
+    if (!phoneValue) {
       return res.status(400).json({ error: 'Phone is required' })
     }
 
     const client = await prisma.client.create({
       data: {
         companyId,
-        phone,
+        phone: phoneValue,
         name,
         email,
         companyName,
         conversationStage,
         notes,
-        isActive: true,
+        isActive: is_active !== undefined ? Boolean(is_active) : true,
       },
     })
 
-    res.status(201).json(client)
+    res.status(201).json(shapeClient(client))
   } catch (error: any) {
     console.error('Error creating client:', error)
     if (error.code === 'P2002') {
@@ -152,7 +177,12 @@ export async function updateClient(req: Request, res: Response) {
   try {
     const companyId = req.user!.companyId
     const { clientId } = req.params as { clientId: string }
-    const updateData = req.body
+    const updateData = { ...req.body }
+
+    if (updateData.is_active !== undefined) {
+      updateData.isActive = Boolean(updateData.is_active)
+      delete updateData.is_active
+    }
 
     const existing = await prisma.client.findUnique({ where: { id: clientId } })
     if (!existing || existing.companyId !== companyId) {
@@ -164,10 +194,30 @@ export async function updateClient(req: Request, res: Response) {
       data: updateData,
     })
 
-    res.json(client)
+    res.json(shapeClient(client))
   } catch (error) {
     console.error('Error updating client:', error)
     res.status(500).json({ error: 'Failed to update client' })
+  }
+}
+
+// DELETE /clients/:clientId - Delete client
+export async function deleteClient(req: Request, res: Response) {
+  try {
+    const companyId = req.user!.companyId
+    const { clientId } = req.params as { clientId: string }
+
+    const existing = await prisma.client.findUnique({ where: { id: clientId } })
+    if (!existing || existing.companyId !== companyId) {
+      return res.status(404).json({ error: 'Client not found' })
+    }
+
+    await prisma.client.delete({ where: { id: clientId } })
+
+    res.json({ success: true, client_id: clientId })
+  } catch (error) {
+    console.error('Error deleting client:', error)
+    res.status(500).json({ error: 'Failed to delete client' })
   }
 }
 
@@ -188,10 +238,8 @@ export async function getClientConversations(req: Request, res: Response) {
       skip: parseInt(offset as string),
       take: parseInt(limit as string),
       include: {
-        messages: {
-          select: { id: true, role: true, createdAt: true },
-          orderBy: { createdAt: 'desc' },
-          take: 1,
+        _count: {
+          select: { messages: true },
         },
       },
       orderBy: { lastMessageAt: 'desc' },
@@ -203,9 +251,10 @@ export async function getClientConversations(req: Request, res: Response) {
       client_id: clientId,
       conversations: conversations.map((conv) => ({
         conversation_id: conv.id,
-        message_count: 0,
+        message_count: conv._count?.messages ?? 0,
         started_at: conv.startedAt?.toISOString(),
-        last_message_at: conv.lastMessageAt?.toISOString(),
+        last_message_at:
+          conv.lastMessageAt?.toISOString() ?? conv.startedAt?.toISOString(),
       })),
       total,
     })

@@ -48,6 +48,18 @@ interface QueuedMessage {
 
 const queuedMessages = new Map<string, QueuedMessage>()
 
+function getClientIdentifierFromJid(jid: string): string {
+  const knownSuffixes = ['@s.whatsapp.net', '@g.us']
+
+  for (const suffix of knownSuffixes) {
+    if (jid.endsWith(suffix)) {
+      return jid.slice(0, -suffix.length)
+    }
+  }
+
+  return jid
+}
+
 const ROUTER_STAGE_TO_CRM_STAGE: Record<string, string> = {
   WELCOME: 'initial',
   PET_REGISTRATION: 'onboarding',
@@ -190,7 +202,7 @@ export async function handleIncomingMessage(
   msg: proto.IWebMessageInfo
 ): Promise<void> {
   const jid = msg.key.remoteJid!
-  const phone = jid.replace('@s.whatsapp.net', '').replace('@g.us', '')
+  const phone = getClientIdentifierFromJid(jid)
   const pushName = msg.pushName || null
   const key = `${companyId}:${phone}`
 
@@ -505,7 +517,7 @@ async function _notifyEscalationToOwner(
 
   if (!freshClient?.aiPaused) return
 
-  const petshop = await prisma.saasPetshop.findUnique({
+  const petshop = await prisma.petshopProfile.findUnique({
     where: { companyId },
     select: { ownerPhone: true },
   })

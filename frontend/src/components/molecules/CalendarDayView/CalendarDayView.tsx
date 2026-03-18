@@ -1,21 +1,21 @@
-import { cn } from '@/lib/cn'
+import { cn } from "@/lib/cn";
 
-type AppointmentStatus = 'concluido' | 'confirmado' | 'pendente'
+type AppointmentStatus = "concluido" | "confirmado" | "pendente" | "cancelado";
 
 export interface DayAppointment {
-  id: string
-  initials: string
-  name: string
-  service: string
-  time: string
-  duration?: number
-  status: AppointmentStatus
+  id: string;
+  initials: string;
+  name: string;
+  service: string;
+  time: string;
+  duration?: number;
+  status: AppointmentStatus;
 }
 
 interface CalendarDayViewProps {
-  appointments: DayAppointment[]
-  selectedDate: string
-  onAppointmentClick?: (id: string) => void
+  appointments: DayAppointment[];
+  selectedDate: string;
+  onAppointmentClick?: (id: string) => void;
 }
 
 const STATUS_STYLES: Record<
@@ -23,32 +23,39 @@ const STATUS_STYLES: Record<
   { bg: string; border: string; text: string; label: string; accent: string }
 > = {
   concluido: {
-    bg: 'bg-[#EAFBEB]',
-    border: 'border-l-[#3CD057]',
-    text: 'text-[#3CD057]',
-    label: 'Concluído',
-    accent: 'bg-[#D4F3D6]',
+    bg: "bg-[#EAFBEB]",
+    border: "border-l-[#3CD057]",
+    text: "text-[#3CD057]",
+    label: "Concluído",
+    accent: "bg-[#D4F3D6]",
   },
   confirmado: {
-    bg: 'bg-[#EBF1FB]',
-    border: 'border-l-[#3C6BD0]',
-    text: 'text-[#3C6BD0]',
-    label: 'Confirmado',
-    accent: 'bg-[#D4E2F3]',
+    bg: "bg-[#EBF1FB]",
+    border: "border-l-[#3C6BD0]",
+    text: "text-[#3C6BD0]",
+    label: "Confirmado",
+    accent: "bg-[#D4E2F3]",
   },
   pendente: {
-    bg: 'bg-[#FBFBEB]',
-    border: 'border-l-[#D0B33C]',
-    text: 'text-[#D0B33C]',
-    label: 'Pendente',
-    accent: 'bg-[#F3F2D4]',
+    bg: "bg-[#FBFBEB]",
+    border: "border-l-[#D0B33C]",
+    text: "text-[#D0B33C]",
+    label: "Pendente",
+    accent: "bg-[#F3F2D4]",
   },
-}
+  cancelado: {
+    bg: "bg-[#FEF2F2]",
+    border: "border-l-[#EF4444]",
+    text: "text-[#EF4444]",
+    label: "Cancelado",
+    accent: "bg-[#FEE2E2]",
+  },
+};
 
-const HOURS = Array.from({ length: 12 }, (_, i) => i + 7)
+const HOURS = Array.from({ length: 12 }, (_, i) => i + 7);
 
 function formatHour(hour: number) {
-  return `${String(hour).padStart(2, '0')}:00`
+  return `${String(hour).padStart(2, "0")}:00`;
 }
 
 export function CalendarDayView({
@@ -66,10 +73,10 @@ export function CalendarDayView({
 
       <div className="flex flex-col">
         {HOURS.map((hour) => {
-          const hourStr = formatHour(hour)
+          const hourStr = formatHour(hour);
           const hourAppointments = appointments.filter(
-            (a) => a.time === hourStr
-          )
+            (a) => a.time === hourStr,
+          );
 
           return (
             <div
@@ -84,15 +91,15 @@ export function CalendarDayView({
 
               <div className="flex flex-1 gap-2 p-2">
                 {hourAppointments.map((appt) => {
-                  const style = STATUS_STYLES[appt.status]
+                  const style = STATUS_STYLES[appt.status];
                   return (
                     <button
                       key={appt.id}
                       onClick={() => onAppointmentClick?.(appt.id)}
                       className={cn(
-                        'flex flex-1 items-start gap-3 rounded-xl border-l-[3px] p-3 text-left transition-opacity hover:opacity-80',
+                        "flex flex-1 items-start gap-3 rounded-xl border-l-[3px] p-3 text-left transition-opacity hover:opacity-80",
                         style.border,
-                        style.bg
+                        style.bg,
                       )}
                     >
                       <div className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-full border border-[rgba(114,123,142,0.1)] bg-white">
@@ -108,9 +115,9 @@ export function CalendarDayView({
                           </span>
                           <span
                             className={cn(
-                              'rounded-full px-2 py-0.5 text-[7px] font-bold uppercase tracking-wider',
+                              "rounded-full px-2 py-0.5 text-[7px] font-bold uppercase tracking-wider",
                               style.accent,
-                              style.text
+                              style.text,
                             )}
                           >
                             {style.label}
@@ -124,7 +131,7 @@ export function CalendarDayView({
                         </span>
                       </div>
                     </button>
-                  )
+                  );
                 })}
                 {hourAppointments.length === 0 && (
                   <div className="flex flex-1 items-center justify-center">
@@ -133,9 +140,9 @@ export function CalendarDayView({
                 )}
               </div>
             </div>
-          )
+          );
         })}
       </div>
     </div>
-  )
+  );
 }

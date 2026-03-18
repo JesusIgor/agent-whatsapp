@@ -8,9 +8,14 @@ export interface PetCreate {
   species?: string
   breed?: string
   age?: number
+  birthDate?: string
+  birth_date?: string
   size?: string
   weight?: number
+  weightKg?: number
+  weight_kg?: number
   color?: string
+  notes?: string
   medical_info?: {
     allergies?: string[]
     medications?: string[]
@@ -27,9 +32,14 @@ export interface PetUpdate {
   species?: string
   breed?: string
   age?: number
+  birthDate?: string
+  birth_date?: string
   size?: string
   weight?: number
+  weightKg?: number
+  weight_kg?: number
   color?: string
+  notes?: string
   medical_info?: {
     allergies?: string[]
     medications?: string[]

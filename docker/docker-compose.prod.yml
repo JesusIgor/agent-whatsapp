@@ -61,6 +61,10 @@ services:
     restart: unless-stopped
     ports:
       - "6379:6379"
+    env_file:
+      - ../.env
+    command: >
+      sh -c "if [ -n \"$$REDIS_PASSWORD\" ]; then redis-server --requirepass $$REDIS_PASSWORD; else redis-server; fi"
     volumes:
       - redis_data:/data
     networks:

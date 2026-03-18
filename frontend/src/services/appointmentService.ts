@@ -15,6 +15,8 @@ export const appointmentService = {
   async listAppointments(params?: {
     status?: string
     phone?: string
+    client_id?: string
+    pet_id?: string
     professional_id?: string
   }): Promise<Appointment[]> {
     // TODO: Backend — endpoint não implementado em api-node ainda. Implementar em backend/api-node/src/modules/
@@ -89,19 +91,24 @@ export const appointmentService = {
     return response.data
   },
 
-  async getAvailableSlots(
-    professionalId: string,
-    daysAhead = 7
-  ): Promise<AvailableSlotsResponse> {
-    // TODO: Backend — endpoint não implementado em api-node ainda. Implementar em backend/api-node/src/modules/
+  async getAvailableSlots(params: {
+    date: string
+    service_id?: string
+  }): Promise<AvailableSlotsResponse> {
     const response = await api.get<AvailableSlotsResponse>(
       '/appointments/available-slots',
-      {
-        params: {
-          professional_id: professionalId,
-          days_ahead: daysAhead,
-        },
-      }
+      { params }
+    )
+    return response.data
+  },
+
+  async getAvailableDates(params: {
+    year: number
+    month: number
+  }): Promise<{ dates: string[] }> {
+    const response = await api.get<{ dates: string[] }>(
+      '/appointments/available-dates',
+      { params }
     )
     return response.data
   },

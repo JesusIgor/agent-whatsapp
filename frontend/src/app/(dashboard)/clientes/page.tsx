@@ -16,18 +16,17 @@ import {
   Loader2,
 } from "lucide-react";
 import { cn } from "@/lib/cn";
-import {
-  maskPhone,
-  unmaskDigits,
-  maskDate,
-  maskTime,
-  dateToISO,
-  dateFromISO,
-} from "@/lib/masks";
-import { useAddressByCep } from "@/hooks";
+import { normalizePetSize, petSizeAbbrev, PET_SIZE_OPTIONS_WITH_PLACEHOLDER } from "@/lib/petSize";
+import { formatPhoneForDisplay, maskPhone, maskDate } from "@/lib/masks";
+import { useAddressByCep, useAvailableScheduleSlots, useToast } from "@/hooks";
 import { useAuthContext } from "@/contexts";
-import { clientService, petService } from "@/services";
-import type { Client, Pet as PetType } from "@/types";
+import { appointmentService, clientService, petService } from "@/services";
+import { appointmentStatusFromApi } from "@/lib/appointmentStatus";
+import type {
+  Appointment as ApiAppointment,
+  Client,
+  Pet as PetType,
+} from "@/types";
 
 import { DashboardLayout } from "@/components/templates/DashboardLayout";
 import { EmptyState } from "@/components/molecules/EmptyState";
@@ -46,7 +45,7 @@ interface Pet {
   breed: string;
   age: string;
   weight: string;
-  size: "pequeno" | "medio" | "grande";
+  size: string;
   color: string;
   notes: string;
 }
@@ -55,6 +54,7 @@ interface Appointment {
   id: string;
   customerId: string;
   petId: string;
+  scheduleId?: string;
   petName: string;
   date: string;
   time: string;
@@ -67,6 +67,7 @@ interface ConversationHistory {
   id: string;
   date: string;
   preview: string;
+  messageCount: number;
   channel: "whatsapp" | "email" | "telefone";
 }
 
@@ -78,6 +79,7 @@ interface Customer {
   status: "ativo" | "inativo";
   address?: string;
   notes?: string;
+  petsCount: number;
   totalAppointments: number;
   lastVisit: string;
   pets: Pet[];
@@ -240,8 +242,8 @@ function ClientsSidebar({
                     </span>
                   </div>
                   <p className="text-xs text-[#727B8E] dark:text-[#8a94a6] mt-1">
-                    {customer.pets.length} pet
-                    {customer.pets.length !== 1 ? "s" : ""} • {customer.phone}
+                    {customer.petsCount} pet
+                    {customer.petsCount !== 1 ? "s" : ""} • {customer.phone}
                   </p>
                   <p className="text-xs text-[#727B8E] dark:text-[#8a94a6] mt-0.5">
                     {customer.totalAppointments} agendamentos
@@ -258,22 +260,22 @@ function ClientsSidebar({
 
 interface PetFormData {
   name: string;
-  species: Pet["species"];
+  species: string;
   breed: string;
   age: string;
   weight: string;
-  size: Pet["size"];
+  size: string;
   color: string;
   notes: string;
 }
 
 const emptyPetForm: PetFormData = {
   name: "",
-  species: "cachorro",
+  species: "",
   breed: "",
   age: "",
   weight: "",
-  size: "medio",
+  size: "",
   color: "",
   notes: "",
 };
@@ -288,6 +290,7 @@ function CustomerDetails({
   onSavePet,
   onSaveAppointment,
   onOpenConversation,
+  activeTab,
   onTabChange,
   loadingPets,
   loadingAppointments,
@@ -299,33 +302,36 @@ function CustomerDetails({
   onDeleteCustomer: (id: string) => void;
   onDeletePet: (petId: string) => void;
   onDeleteAppointment: (appointmentId: string) => void;
-  onSavePet: (pet: Omit<Pet, "id" | "customerId">, petId?: string) => void;
+  onSavePet: (
+    pet: Omit<Pet, "id" | "customerId">,
+    petId?: string,
+  ) => Promise<void>;
   onSaveAppointment: (
     appointment: Omit<Appointment, "id" | "customerId">,
     appointmentId?: string,
   ) => void;
   onOpenConversation: (conversationId: string) => void;
+  activeTab: "pets" | "agendamentos" | "conversas";
   onTabChange: (tab: "pets" | "agendamentos" | "conversas") => void;
   loadingPets?: boolean;
   loadingAppointments?: boolean;
   loadingConversations?: boolean;
 }) {
-  const [activeTab, setActiveTab] = useState<
-    "pets" | "agendamentos" | "conversas"
-  >("pets");
-
-  const handleTabChange = (tab: "pets" | "agendamentos" | "conversas") => {
-    setActiveTab(tab);
-    onTabChange(tab);
-  };
   const [petModalOpen, setPetModalOpen] = useState(false);
   const [editingPet, setEditingPet] = useState<Pet | null>(null);
   const [petForm, setPetForm] = useState<PetFormData>(emptyPetForm);
+  const [petFormErrors, setPetFormErrors] = useState<{
+    name?: string;
+    species?: string;
+    size?: string;
+  }>({});
+  const [savingPet, setSavingPet] = useState(false);
   const [appointmentModalOpen, setAppointmentModalOpen] = useState(false);
   const [editingAppointment, setEditingAppointment] =
     useState<Appointment | null>(null);
   const [appointmentForm, setAppointmentForm] = useState({
     petId: "",
+    scheduleId: "",
     petName: "",
     date: "",
     time: "",
@@ -334,6 +340,38 @@ function CustomerDetails({
     notes: "",
   });
   const [menuOpen, setMenuOpen] = useState(false);
+  const {
+    slots: appointmentSlots,
+    loading: appointmentSlotsLoading,
+    error: appointmentSlotsError,
+  } = useAvailableScheduleSlots(
+    appointmentForm.date,
+    appointmentModalOpen && Boolean(customer),
+  );
+
+  const hasCustomSelectedTime =
+    Boolean(appointmentForm.time) &&
+    !appointmentSlots.some((slot) => slot.time === appointmentForm.time);
+  const appointmentTimeOptions = [
+    ...(hasCustomSelectedTime
+      ? [
+          {
+            value: appointmentForm.time,
+            label: `${appointmentForm.time} • horário atual`,
+          },
+        ]
+      : []),
+    ...appointmentSlots.map((slot) => ({
+      value: String(slot.schedule_id),
+      label:
+        slot.remaining_capacity === 1
+          ? `${slot.time} • 1 vaga`
+          : `${slot.time} • ${slot.remaining_capacity} vagas`,
+    })),
+  ];
+  const appointmentTimeValue = hasCustomSelectedTime
+    ? appointmentForm.time
+    : appointmentForm.scheduleId;
 
   if (!customer) {
     return (
@@ -366,7 +404,7 @@ function CustomerDetails({
         breed: pet.breed,
         age: pet.age,
         weight: pet.weight,
-        size: pet.size,
+        size: normalizePetSize(pet.size) ?? "",
         color: pet.color,
         notes: pet.notes,
       });
@@ -376,12 +414,28 @@ function CustomerDetails({
     setPetModalOpen(true);
   };
 
-  const handleSavePet = () => {
-    if (!petForm.name.trim()) return;
-    onSavePet(petForm, editingPet?.id);
-    setPetModalOpen(false);
-    setPetForm(emptyPetForm);
-    setEditingPet(null);
+  const handleSavePet = async () => {
+    const errs: { name?: string; species?: string; size?: string } = {};
+    if (!petForm.name.trim()) errs.name = "Nome é obrigatório";
+    if (!petForm.species) errs.species = "Espécie é obrigatória";
+    if (!petForm.size) errs.size = "Porte é obrigatório";
+    if (Object.keys(errs).length > 0) {
+      setPetFormErrors(errs);
+      return;
+    }
+    setPetFormErrors({});
+
+    setSavingPet(true);
+    try {
+      await onSavePet(petForm as Omit<Pet, "id" | "customerId">, editingPet?.id);
+      setPetModalOpen(false);
+      setPetForm(emptyPetForm);
+      setEditingPet(null);
+    } catch {
+      // The parent already handles user-facing feedback.
+    } finally {
+      setSavingPet(false);
+    }
   };
 
   const handleOpenAppointmentModal = (appointment?: Appointment) => {
@@ -389,6 +443,7 @@ function CustomerDetails({
     if (appointment) {
       setAppointmentForm({
         petId: appointment.petId,
+        scheduleId: appointment.scheduleId || "",
         petName: appointment.petName,
         date: appointment.date,
         time: appointment.time,
@@ -399,6 +454,7 @@ function CustomerDetails({
     } else {
       setAppointmentForm({
         petId: customer?.pets[0]?.id || "",
+        scheduleId: "",
         petName: customer?.pets[0]?.name || "",
         date: "",
         time: "",
@@ -411,7 +467,15 @@ function CustomerDetails({
   };
 
   const handleSaveAppointment = () => {
-    if (!appointmentForm.service.trim() || !appointmentForm.petId) return;
+    if (
+      !appointmentForm.service.trim() ||
+      !appointmentForm.petId ||
+      !appointmentForm.date ||
+      !appointmentForm.time
+    ) {
+      return;
+    }
+
     onSaveAppointment(appointmentForm, editingAppointment?.id);
     setAppointmentModalOpen(false);
     setEditingAppointment(null);
@@ -471,7 +535,15 @@ function CustomerDetails({
                   <button
                     type="button"
                     className="flex w-full items-center gap-2 px-4 py-2.5 text-sm text-[#434A57] dark:text-[#f5f9fc] hover:bg-[#F4F6F9] dark:hover:bg-[#212225]"
-                    onClick={() => setMenuOpen(false)}
+                    onClick={() => {
+                      setMenuOpen(false);
+                      if (customer.conversations[0]?.id) {
+                        onOpenConversation(customer.conversations[0].id);
+                        return;
+                      }
+
+                      onTabChange("conversas");
+                    }}
                   >
                     <MessageCircle className="h-4 w-4" />
                     Abrir conversa
@@ -480,7 +552,7 @@ function CustomerDetails({
                     type="button"
                     className="flex w-full items-center gap-2 px-4 py-2.5 text-sm text-red-500 hover:bg-[#F4F6F9] dark:hover:bg-[#212225]"
                     onClick={() => {
-                      onDeleteCustomer(customer.id);
+                      void onDeleteCustomer(customer.id);
                       setMenuOpen(false);
                     }}
                   >
@@ -498,7 +570,7 @@ function CustomerDetails({
         <div className="flex gap-1 mx-4 mt-4 p-1 bg-[#F4F6F9] dark:bg-[#212225] rounded-lg">
           <button
             type="button"
-            onClick={() => handleTabChange("pets")}
+            onClick={() => onTabChange("pets")}
             className={`flex-1 flex items-center justify-center gap-2 px-4 py-2 rounded-md text-sm font-medium transition-colors ${
               activeTab === "pets"
                 ? "bg-white dark:bg-[#1A1B1D] text-[#434A57] dark:text-[#f5f9fc] shadow-sm"
@@ -506,11 +578,11 @@ function CustomerDetails({
             }`}
           >
             <PawPrint className="h-4 w-4" />
-            Pets ({customer.pets.length})
+            Pets ({customer.petsCount})
           </button>
           <button
             type="button"
-            onClick={() => handleTabChange("agendamentos")}
+            onClick={() => onTabChange("agendamentos")}
             className={`flex-1 flex items-center justify-center gap-2 px-4 py-2 rounded-md text-sm font-medium transition-colors ${
               activeTab === "agendamentos"
                 ? "bg-white dark:bg-[#1A1B1D] text-[#434A57] dark:text-[#f5f9fc] shadow-sm"
@@ -522,7 +594,7 @@ function CustomerDetails({
           </button>
           <button
             type="button"
-            onClick={() => handleTabChange("conversas")}
+            onClick={() => onTabChange("conversas")}
             className={`flex-1 flex items-center justify-center gap-2 px-4 py-2 rounded-md text-sm font-medium transition-colors ${
               activeTab === "conversas"
                 ? "bg-white dark:bg-[#1A1B1D] text-[#434A57] dark:text-[#f5f9fc] shadow-sm"
@@ -574,11 +646,7 @@ function CustomerDetails({
                             </p>
                             <p className="text-sm text-[#727B8E] dark:text-[#8a94a6]">
                               {pet.breed} • {pet.age} • {pet.weight} • Porte{" "}
-                              {pet.size === "pequeno"
-                                ? "P"
-                                : pet.size === "medio"
-                                  ? "M"
-                                  : "G"}
+                              {petSizeAbbrev(pet.size)}
                             </p>
                             {pet.notes && (
                               <p className="text-xs text-[#727B8E] dark:text-[#8a94a6] mt-1">
@@ -597,7 +665,7 @@ function CustomerDetails({
                           </button>
                           <button
                             type="button"
-                            onClick={() => onDeletePet(pet.id)}
+                            onClick={() => void onDeletePet(pet.id)}
                             className="flex h-8 w-8 items-center justify-center rounded-full text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20"
                           >
                             <Trash2 className="h-4 w-4" />
@@ -675,7 +743,7 @@ function CustomerDetails({
                           </button>
                           <button
                             type="button"
-                            onClick={() => onDeleteAppointment(apt.id)}
+                            onClick={() => void onDeleteAppointment(apt.id)}
                             className="flex h-8 w-8 items-center justify-center rounded-full text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20"
                           >
                             <Trash2 className="h-4 w-4" />
@@ -722,9 +790,15 @@ function CustomerDetails({
                           <p className="text-sm font-medium text-[#434A57] dark:text-[#f5f9fc] capitalize">
                             {conv.channel}
                           </p>
-                          <span className="text-xs text-[#727B8E] dark:text-[#8a94a6]">
-                            {conv.date}
-                          </span>
+                          <div className="flex items-center gap-2">
+                            <span className="rounded-full bg-[#1E62EC]/10 px-2 py-0.5 text-[11px] font-medium text-[#1E62EC] dark:bg-[#2172e5]/20 dark:text-[#7fb0ff]">
+                              {conv.messageCount} mensagem
+                              {conv.messageCount !== 1 ? "ens" : ""}
+                            </span>
+                            <span className="text-xs text-[#727B8E] dark:text-[#8a94a6]">
+                              {conv.date}
+                            </span>
+                          </div>
                         </div>
                         <p className="text-sm text-[#727B8E] dark:text-[#8a94a6] truncate mt-1">
                           {conv.preview}
@@ -749,40 +823,52 @@ function CustomerDetails({
         onClose={() => {
           setPetModalOpen(false);
           setPetForm(emptyPetForm);
+          setPetFormErrors({});
           setEditingPet(null);
         }}
         title={editingPet ? "Editar pet" : "Novo pet"}
-        onSubmit={handleSavePet}
+        onSubmit={() => void handleSavePet()}
         submitText="Salvar"
+        isLoading={savingPet}
         className="max-w-[400px] max-h-[85vh] flex flex-col overflow-hidden"
       >
         <div className="flex flex-col gap-4 overflow-y-auto max-h-[320px]">
-          <Input
-            label="Nome do pet"
-            placeholder="Nome"
-            value={petForm.name}
-            onChange={(e) =>
-              setPetForm((prev) => ({ ...prev, name: e.target.value }))
-            }
-          />
-          <Select
-            label="Espécie"
-            placeholder="Selecione"
-            value={petForm.species}
-            onChange={(e) =>
-              setPetForm((prev) => ({
-                ...prev,
-                species: e.target.value as Pet["species"],
-              }))
-            }
-            options={[
-              { value: "cachorro", label: "Cachorro" },
-              { value: "gato", label: "Gato" },
-              { value: "ave", label: "Ave" },
-              { value: "roedor", label: "Roedor" },
-              { value: "outro", label: "Outro" },
-            ]}
-          />
+          <div>
+            <Input
+              label="Nome do pet *"
+              placeholder="Nome"
+              value={petForm.name}
+              onChange={(e) => {
+                setPetForm((prev) => ({ ...prev, name: e.target.value }));
+                if (e.target.value) setPetFormErrors((prev) => ({ ...prev, name: undefined }));
+              }}
+            />
+            {petFormErrors.name && (
+              <p className="mt-1 text-xs text-red-500">{petFormErrors.name}</p>
+            )}
+          </div>
+          <div>
+            <Select
+              label="Espécie *"
+              placeholder="Selecione a espécie"
+              value={petForm.species}
+              onChange={(e) => {
+                setPetForm((prev) => ({ ...prev, species: e.target.value }));
+                if (e.target.value) setPetFormErrors((prev) => ({ ...prev, species: undefined }));
+              }}
+              options={[
+                { value: "", label: "Selecione a espécie" },
+                { value: "cachorro", label: "Cachorro" },
+                { value: "gato", label: "Gato" },
+                { value: "ave", label: "Ave" },
+                { value: "roedor", label: "Roedor" },
+                { value: "outro", label: "Outro" },
+              ]}
+            />
+            {petFormErrors.species && (
+              <p className="mt-1 text-xs text-red-500">{petFormErrors.species}</p>
+            )}
+          </div>
           <div className="grid grid-cols-2 gap-3">
             <Input
               label="Raça"
@@ -810,22 +896,21 @@ function CustomerDetails({
                 setPetForm((prev) => ({ ...prev, weight: e.target.value }))
               }
             />
-            <Select
-              label="Porte"
-              placeholder="Selecione"
-              value={petForm.size}
-              onChange={(e) =>
-                setPetForm((prev) => ({
-                  ...prev,
-                  size: e.target.value as Pet["size"],
-                }))
-              }
-              options={[
-                { value: "pequeno", label: "Pequeno" },
-                { value: "medio", label: "Médio" },
-                { value: "grande", label: "Grande" },
-              ]}
-            />
+            <div>
+              <Select
+                label="Porte *"
+                placeholder="Selecione o porte"
+                value={petForm.size}
+                onChange={(e) => {
+                  setPetForm((prev) => ({ ...prev, size: e.target.value }));
+                  if (e.target.value) setPetFormErrors((prev) => ({ ...prev, size: undefined }));
+                }}
+                options={[...PET_SIZE_OPTIONS_WITH_PLACEHOLDER]}
+              />
+              {petFormErrors.size && (
+                <p className="mt-1 text-xs text-red-500">{petFormErrors.size}</p>
+              )}
+            </div>
           </div>
           <Input
             label="Cor/Pelagem"
@@ -897,23 +982,58 @@ function CustomerDetails({
                 setAppointmentForm((prev) => ({
                   ...prev,
                   date: maskDate(e.target.value),
+                  scheduleId: "",
+                  time: "",
                 }))
               }
               maxLength={10}
             />
-            <Input
+            <Select
               label="Horário"
-              placeholder="HH:MM"
-              value={appointmentForm.time}
-              onChange={(e) =>
-                setAppointmentForm((prev) => ({
-                  ...prev,
-                  time: maskTime(e.target.value),
-                }))
+              placeholder={
+                !appointmentForm.date
+                  ? "Informe a data primeiro"
+                  : appointmentSlotsLoading
+                    ? "Carregando horários..."
+                    : appointmentTimeOptions.length === 0
+                      ? "Nenhum horário disponível"
+                      : "Selecione o horário"
               }
-              maxLength={5}
+              value={appointmentTimeValue}
+              onChange={(e) =>
+                setAppointmentForm((prev) => {
+                  const selectedSlot = appointmentSlots.find(
+                    (slot) => String(slot.schedule_id) === e.target.value,
+                  );
+
+                  if (!selectedSlot) {
+                    return {
+                      ...prev,
+                      scheduleId: "",
+                      time: e.target.value,
+                    };
+                  }
+
+                  return {
+                    ...prev,
+                    scheduleId: String(selectedSlot.schedule_id),
+                    time: selectedSlot.time,
+                  };
+                })
+              }
+              options={appointmentTimeOptions}
+              disabled={
+                !appointmentForm.date ||
+                appointmentSlotsLoading ||
+                appointmentTimeOptions.length === 0
+              }
             />
           </div>
+          {appointmentSlotsError && (
+            <p className="text-xs text-red-500 dark:text-red-400">
+              {appointmentSlotsError}
+            </p>
+          )}
           <Select
             label="Status"
             placeholder="Selecione"
@@ -956,18 +1076,184 @@ const emptyCustomerForm = {
   notes: "",
 };
 
-function clientToCustomer(c: Client): Customer {
-  const digits = c.phone?.replace(/\D/g, "") ?? "";
-  const phoneDisplay = digits.length >= 10 ? maskPhone(digits) : c.phone;
+type ApiClient = Client & {
+  isActive?: boolean;
+  totalAppointments?: number | null;
+  totalPets?: number | null;
+  totalConversations?: number | null;
+};
+
+type ApiPet = PetType & {
+  birthDate?: string | null;
+  birth_date?: string | null;
+  weightKg?: number | string | null;
+  weight_kg?: number | string | null;
+  notes?: string | null;
+  isActive?: boolean | null;
+  is_active?: boolean | null;
+};
+
+type ApiPetAppointment = ApiAppointment & {
+  pet_id?: string | null;
+};
+
+
+function formatPetAge(pet: ApiPet): string {
+  if (pet.age !== undefined && pet.age !== null) {
+    return String(pet.age);
+  }
+
+  const birthDate = pet.birthDate ?? pet.birth_date;
+  if (!birthDate) return "";
+
+  const birthday = new Date(birthDate);
+  if (Number.isNaN(birthday.getTime())) return "";
+
+  const today = new Date();
+  let age = today.getFullYear() - birthday.getFullYear();
+  const monthDelta = today.getMonth() - birthday.getMonth();
+  if (
+    monthDelta < 0 ||
+    (monthDelta === 0 && today.getDate() < birthday.getDate())
+  ) {
+    age -= 1;
+  }
+
+  return age >= 0 ? String(age) : "";
+}
+
+function formatPetWeight(pet: ApiPet): string {
+  const value = pet.weight ?? pet.weightKg ?? pet.weight_kg;
+  if (value === undefined || value === null || value === "") {
+    return "";
+  }
+
+  return String(value);
+}
+
+function getPetNotes(pet: ApiPet): string {
+  if (typeof pet.notes === "string" && pet.notes.trim()) {
+    return pet.notes.trim();
+  }
+
+  if (typeof pet.medical_info === "string" && pet.medical_info.trim()) {
+    return pet.medical_info.trim();
+  }
+
+  if (pet.medical_info && typeof pet.medical_info === "object") {
+    const medicalInfo = pet.medical_info as {
+      conditions?: string[];
+      medications?: string[];
+      allergies?: string[];
+      notes?: string;
+    };
+
+    if (typeof medicalInfo.notes === "string" && medicalInfo.notes.trim()) {
+      return medicalInfo.notes.trim();
+    }
+
+    const values = [
+      ...(medicalInfo.conditions ?? []),
+      ...(medicalInfo.medications ?? []),
+      ...(medicalInfo.allergies ?? []),
+    ]
+      .map((value) => value.trim())
+      .filter(Boolean);
+
+    if (values.length > 0) {
+      return values.join(", ");
+    }
+  }
+
+  return "";
+}
+
+function mapPetFromApi(pet: ApiPet, customerId: string): Pet {
+  return {
+    id: pet.id,
+    customerId,
+    name: pet.name,
+    species: (pet.species as Pet["species"]) || "outro",
+    breed: pet.breed || "",
+    age: formatPetAge(pet),
+    weight: formatPetWeight(pet),
+    size: normalizePetSize(pet.size) ?? pet.size ?? "",
+    color: pet.color || "",
+    notes: getPetNotes(pet),
+  };
+}
+
+function normalizeAppointmentStatus(
+  status?: string | null,
+): Appointment["status"] {
+  return appointmentStatusFromApi(status);
+}
+
+function mapAppointmentFromApi(
+  appointment: ApiPetAppointment,
+  customerId: string,
+): Appointment {
+  const scheduledDate = new Date(appointment.scheduled_at);
+  const dateStr = scheduledDate.toLocaleDateString("pt-BR");
+  const timeStr = scheduledDate.toLocaleTimeString("pt-BR", {
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+
+  return {
+    id: appointment.id,
+    customerId,
+    petId: appointment.pet_id || "",
+    scheduleId:
+      appointment.schedule_id !== undefined && appointment.schedule_id !== null
+        ? String(appointment.schedule_id)
+        : undefined,
+    petName: appointment.pet_name || "",
+    date: dateStr,
+    time: timeStr,
+    service: appointment.specialty || "",
+    status: normalizeAppointmentStatus(appointment.status),
+    notes: appointment.notes || "",
+  };
+}
+
+function ageToBirthDate(ageValue: string): string | undefined {
+  const age = parseInt(ageValue, 10);
+  if (!Number.isFinite(age) || age < 0) {
+    return undefined;
+  }
+
+  const today = new Date();
+  return new Date(
+    today.getFullYear() - age,
+    today.getMonth(),
+    today.getDate(),
+  ).toISOString();
+}
+
+function parseWeightKg(weightValue: string): number | undefined {
+  const normalized = weightValue.replace(",", ".").trim();
+  if (!normalized) return undefined;
+
+  const parsed = Number.parseFloat(normalized);
+  return Number.isFinite(parsed) ? parsed : undefined;
+}
+
+function clientToCustomer(c: ApiClient): Customer {
+  const phoneDisplay = formatPhoneForDisplay(c.phone ?? "");
+  const isActive = c.is_active ?? c.isActive ?? true;
+  const petsCount = c.total_pets ?? c.totalPets ?? 0;
+
   return {
     id: c.id,
     name: c.name ?? "",
     email: c.email ?? "",
     phone: phoneDisplay,
-    status: c.is_active ? "ativo" : "inativo",
+    status: isActive ? "ativo" : "inativo",
     address: undefined,
     notes: c.notes ?? undefined,
-    totalAppointments: c.total_appointments ?? 0,
+    petsCount,
+    totalAppointments: c.total_appointments ?? c.totalAppointments ?? 0,
     lastVisit: "",
     pets: [],
     appointments: [],
@@ -999,6 +1285,7 @@ function parseNotesForEdit(notes?: string | null): {
 export default function ClientesPage() {
   const navigate = useNavigate();
   const { user } = useAuthContext();
+  const toast = useToast();
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [customersLoading, setCustomersLoading] = useState(true);
   const [customersError, setCustomersError] = useState<string | null>(null);
@@ -1088,24 +1375,14 @@ export default function ClientesPage() {
           customerId,
           user?.petshop_id,
         );
-        const mappedPets: Pet[] = pets.map((p) => ({
-          id: p.id,
-          customerId,
-          name: p.name,
-          species: (p.species as Pet["species"]) || "outro",
-          breed: p.breed || "",
-          age: p.age?.toString() || "",
-          weight: p.weight?.toString() || "",
-          size: (p.size as Pet["size"]) || "medio",
-          color: p.color || "",
-          notes:
-            typeof p.medical_info === "object" && p.medical_info !== null
-              ? (p.medical_info as { notes?: string }).notes || ""
-              : "",
-        }));
+        const mappedPets = pets.map((pet) =>
+          mapPetFromApi(pet as ApiPet, customerId),
+        );
         setCustomers((prev) =>
           prev.map((c) =>
-            c.id === customerId ? { ...c, pets: mappedPets } : c,
+            c.id === customerId
+              ? { ...c, pets: mappedPets, petsCount: mappedPets.length }
+              : c,
           ),
         );
         setLoadedTabs((prev) => ({
@@ -1133,7 +1410,11 @@ export default function ClientesPage() {
           result.conversations.map((conv) => ({
             id: conv.conversation_id,
             date: new Date(conv.last_message_at).toLocaleDateString("pt-BR"),
-            preview: `${conv.message_count} mensagens`,
+            preview:
+              conv.message_count > 0
+                ? `${conv.message_count} mensagens registradas`
+                : "Sem mensagens registradas",
+            messageCount: conv.message_count,
             channel: "whatsapp" as const,
           }));
         setCustomers((prev) =>
@@ -1157,37 +1438,18 @@ export default function ClientesPage() {
   );
 
   const loadAppointments = useCallback(
-    async (customerId: string, phone: string) => {
+    async (customerId: string) => {
       const alreadyLoaded = loadedTabs[customerId]?.has("agendamentos");
       if (alreadyLoaded) return;
 
       setLoadingAppointments(true);
       try {
-        const { appointmentService } = await import("@/services");
-        const phoneDigits = phone.replace(/\D/g, "");
         const appointments = await appointmentService.listAppointments({
-          phone: phoneDigits,
+          client_id: customerId,
         });
-        const mappedAppointments: Appointment[] = appointments.map((apt) => {
-          const scheduledDate = new Date(apt.scheduled_at);
-          const dateStr = scheduledDate.toLocaleDateString("pt-BR");
-          const timeStr = scheduledDate.toLocaleTimeString("pt-BR", {
-            hour: "2-digit",
-            minute: "2-digit",
-          });
-
-          return {
-            id: apt.id,
-            customerId,
-            petId: "",
-            petName: apt.pet_name || "",
-            date: dateStr,
-            time: timeStr,
-            service: apt.specialty || "",
-            status: (apt.status as Appointment["status"]) || "pendente",
-            notes: "",
-          };
-        });
+        const mappedAppointments = appointments.map((appointment) =>
+          mapAppointmentFromApi(appointment as ApiPetAppointment, customerId),
+        );
         setCustomers((prev) =>
           prev.map((c) =>
             c.id === customerId
@@ -1219,7 +1481,7 @@ export default function ClientesPage() {
       if (tab === "pets") {
         loadPets(selectedId);
       } else if (tab === "agendamentos") {
-        loadAppointments(selectedId, customer.phone);
+        loadAppointments(selectedId);
       } else if (tab === "conversas") {
         loadConversations(selectedId);
       }
@@ -1228,46 +1490,168 @@ export default function ClientesPage() {
   );
 
   useEffect(() => {
-    if (selectedId) {
-      setActiveTab("pets");
-      loadPets(selectedId);
-    }
-  }, [selectedId, loadPets]);
+    if (!selectedId) return;
 
-  const handleDeleteCustomer = (customerId: string) => {
-    setCustomers((prev) => prev.filter((c) => c.id !== customerId));
-    if (selectedId === customerId) {
-      setSelectedId(null);
+    if (activeTab === "pets") {
+      loadPets(selectedId);
+      return;
+    }
+
+    if (activeTab === "agendamentos") {
+      loadAppointments(selectedId);
+      return;
+    }
+
+    loadConversations(selectedId);
+  }, [selectedId, activeTab, loadPets, loadAppointments, loadConversations]);
+
+  const handleDeleteCustomer = async (customerId: string) => {
+    const customer = customers.find((item) => item.id === customerId);
+
+    try {
+      await clientService.deleteClient(customerId);
+      setCustomers((prev) => prev.filter((c) => c.id !== customerId));
+      if (selectedId === customerId) {
+        setSelectedId(null);
+      }
+      toast.success(
+        "Cliente removido",
+        customer?.name
+          ? `${customer.name} foi excluído com sucesso.`
+          : "O cliente foi excluído com sucesso.",
+      );
+    } catch (error: any) {
+      console.error("Erro ao excluir cliente:", error);
+      toast.error(
+        "Erro ao excluir cliente",
+        error.response?.data?.detail ||
+          error.response?.data?.error ||
+          "Não foi possível excluir o cliente.",
+      );
     }
   };
 
   const handleDeletePet = async (petId: string) => {
     if (!selectedCustomer) return;
+
+    const pet = selectedCustomer.pets.find((item) => item.id === petId);
+
     try {
       await petService.deletePet(petId);
       setCustomers((prev) =>
         prev.map((c) =>
           c.id === selectedCustomer.id
-            ? { ...c, pets: c.pets.filter((p) => p.id !== petId) }
+            ? {
+                ...c,
+                pets: c.pets.filter((p) => p.id !== petId),
+                petsCount: Math.max(c.petsCount - 1, 0),
+              }
             : c,
         ),
       );
+      toast.success(
+        "Pet removido",
+        pet?.name
+          ? `${pet.name} foi removido com sucesso.`
+          : "O pet foi removido com sucesso.",
+      );
     } catch (error: any) {
       console.error("Erro ao excluir pet:", error);
-      alert(error.response?.data?.detail || "Erro ao excluir pet");
+      toast.error(
+        "Erro ao excluir pet",
+        error.response?.data?.detail ||
+          error.response?.data?.error ||
+          "Não foi possível excluir o pet.",
+      );
     }
   };
 
-  const handleDeleteAppointment = (appointmentId: string) => {
+  const handleDeleteAppointment = async (appointmentId: string) => {
     if (!selectedCustomer) return;
+
+    const appointment = selectedCustomer.appointments.find(
+      (item) => item.id === appointmentId,
+    );
+
+    if (!appointment) return;
+
+    if (appointmentId.startsWith("apt-")) {
+      setCustomers((prev) =>
+        prev.map((c) =>
+          c.id === selectedCustomer.id
+            ? {
+                ...c,
+                appointments: c.appointments.filter(
+                  (a) => a.id !== appointmentId,
+                ),
+                totalAppointments: Math.max(c.totalAppointments - 1, 0),
+              }
+            : c,
+        ),
+      );
+      toast.info(
+        "Agendamento removido",
+        "O registro local foi removido da visualização do cliente.",
+      );
+      return;
+    }
+
+    try {
+      await appointmentService.cancelAppointment(appointmentId);
+      setCustomers((prev) =>
+        prev.map((c) =>
+          c.id === selectedCustomer.id
+            ? {
+                ...c,
+                appointments: c.appointments.filter(
+                  (a) => a.id !== appointmentId,
+                ),
+                totalAppointments: Math.max(c.totalAppointments - 1, 0),
+              }
+            : c,
+        ),
+      );
+      toast.success(
+        "Agendamento cancelado",
+        appointment.service
+          ? `${appointment.service} foi cancelado com sucesso.`
+          : "O agendamento foi cancelado com sucesso.",
+      );
+    } catch (error: any) {
+      console.error("Erro ao cancelar agendamento:", error);
+      toast.error(
+        "Erro ao cancelar agendamento",
+        error.response?.data?.detail ||
+          error.response?.data?.error ||
+          "Não foi possível cancelar o agendamento.",
+      );
+    }
+  };
+
+  const updateCustomerAppointmentState = (
+    appointmentData: Omit<Appointment, "id" | "customerId">,
+    appointmentId?: string,
+  ) => {
     setCustomers((prev) =>
       prev.map((c) =>
         c.id === selectedCustomer.id
           ? {
               ...c,
-              appointments: c.appointments.filter(
-                (a) => a.id !== appointmentId,
-              ),
+              totalAppointments: appointmentId
+                ? c.totalAppointments
+                : c.totalAppointments + 1,
+              appointments: appointmentId
+                ? c.appointments.map((a) =>
+                    a.id === appointmentId ? { ...a, ...appointmentData } : a,
+                  )
+                : [
+                    ...c.appointments,
+                    {
+                      id: `apt-${Date.now()}`,
+                      customerId: selectedCustomer.id,
+                      ...appointmentData,
+                    },
+                  ],
             }
           : c,
       ),
@@ -1284,13 +1668,11 @@ export default function ClientesPage() {
             name: petData.name,
             species: petData.species,
             breed: petData.breed || undefined,
-            age: petData.age ? parseInt(petData.age) : undefined,
-            weight: petData.weight ? parseFloat(petData.weight) : undefined,
-            size: petData.size,
+            birthDate: ageToBirthDate(petData.age),
+            weightKg: parseWeightKg(petData.weight),
+            size: normalizePetSize(petData.size),
             color: petData.color || undefined,
-            medical_info: petData.notes
-              ? { conditions: [petData.notes] }
-              : undefined,
+            notes: petData.notes || undefined,
           });
           setCustomers((prev) =>
             prev.map((c) => {
@@ -1298,10 +1680,18 @@ export default function ClientesPage() {
               return {
                 ...c,
                 pets: c.pets.map((p) =>
-                  p.id === petId ? { ...p, ...petData, id: updated.id } : p,
+                  p.id === petId
+                    ? mapPetFromApi(updated as ApiPet, selectedCustomer.id)
+                    : p,
                 ),
               };
             }),
+          );
+          toast.success(
+            "Pet atualizado",
+            petData.name
+              ? `${petData.name} foi atualizado com sucesso.`
+              : "O pet foi atualizado com sucesso.",
           );
         } else {
           const created = await petService.createPet({
@@ -1310,45 +1700,42 @@ export default function ClientesPage() {
             name: petData.name,
             species: petData.species,
             breed: petData.breed || undefined,
-            age: petData.age ? parseInt(petData.age) : undefined,
-            weight: petData.weight ? parseFloat(petData.weight) : undefined,
-            size: petData.size,
+            birthDate: ageToBirthDate(petData.age),
+            weightKg: parseWeightKg(petData.weight),
+            size: normalizePetSize(petData.size),
             color: petData.color || undefined,
-            medical_info: petData.notes
-              ? { conditions: [petData.notes] }
-              : undefined,
+            notes: petData.notes || undefined,
           });
-          const newPet: Pet = {
-            id: created.id,
-            customerId: selectedCustomer.id,
-            name: created.name,
-            species: (created.species as Pet["species"]) || "outro",
-            breed: created.breed || "",
-            age: created.age?.toString() || "",
-            weight: created.weight?.toString() || "",
-            size: (created.size as Pet["size"]) || "medio",
-            color: created.color || "",
-            notes:
-              typeof created.medical_info === "string"
-                ? created.medical_info
-                : "",
-          };
+          const newPet = mapPetFromApi(created as ApiPet, selectedCustomer.id);
           setCustomers((prev) =>
             prev.map((c) => {
               if (c.id !== selectedCustomer.id) return c;
               return {
                 ...c,
+                petsCount: c.petsCount + 1,
                 pets: [...c.pets, newPet],
               };
             }),
           );
+          toast.success(
+            "Pet cadastrado",
+            petData.name
+              ? `${petData.name} foi cadastrado com sucesso.`
+              : "O pet foi cadastrado com sucesso.",
+          );
         }
       } catch (error: any) {
         console.error("Erro ao salvar pet:", error);
-        alert(error.response?.data?.detail || "Erro ao salvar pet");
+        toast.error(
+          "Erro ao salvar pet",
+          error.response?.data?.detail ||
+            error.response?.data?.error ||
+            "Não foi possível salvar o pet.",
+        );
+        throw error;
       }
     },
-    [selectedCustomer, user],
+    [selectedCustomer, toast, user],
   );
 
   const handleSaveAppointment = useCallback(
@@ -1358,32 +1745,15 @@ export default function ClientesPage() {
     ) => {
       if (!selectedCustomer) return;
 
-      setCustomers((prev) =>
-        prev.map((c) => {
-          if (c.id !== selectedCustomer.id) return c;
-
-          if (appointmentId) {
-            return {
-              ...c,
-              appointments: c.appointments.map((a) =>
-                a.id === appointmentId ? { ...a, ...appointmentData } : a,
-              ),
-            };
-          } else {
-            const newAppointment: Appointment = {
-              id: `apt-${Date.now()}`,
-              customerId: selectedCustomer.id,
-              ...appointmentData,
-            };
-            return {
-              ...c,
-              appointments: [...c.appointments, newAppointment],
-            };
-          }
-        }),
+      updateCustomerAppointmentState(appointmentData, appointmentId);
+      toast.warning(
+        appointmentId
+          ? "Agendamento atualizado localmente"
+          : "Agendamento criado localmente",
+        "Este atalho da aba Clientes ainda não sincroniza criação ou edição com o backend.",
       );
     },
-    [selectedCustomer],
+    [selectedCustomer, toast],
   );
 
   const handleOpenConversation = useCallback(
@@ -1395,8 +1765,8 @@ export default function ClientesPage() {
 
   const handleSaveCustomer = useCallback(async () => {
     const { name, email, phone, status, notes } = customerForm;
-    const phoneDigits = unmaskDigits(phone);
-    if (!name.trim() || !phoneDigits) return;
+    const phoneValue = phone.trim();
+    if (!name.trim() || !phoneValue) return;
 
     const addr = address;
     const addressStr = [
@@ -1417,6 +1787,7 @@ export default function ClientesPage() {
     try {
       if (editingCustomer) {
         const updated = await clientService.updateClient(editingCustomer.id, {
+          phone: phoneValue,
           name: name.trim(),
           email: email.trim() || undefined,
           is_active: status === "ativo",
@@ -1428,9 +1799,13 @@ export default function ClientesPage() {
           ),
         );
         setCustomerModalOpen(false);
+        toast.success(
+          "Cliente atualizado",
+          `${name.trim()} foi atualizado com sucesso.`,
+        );
       } else {
         const newClient = await clientService.createClient({
-          phone: phoneDigits,
+          phone: phoneValue,
           name: name.trim(),
           email: email.trim() || undefined,
           source: "manual",
@@ -1444,13 +1819,22 @@ export default function ClientesPage() {
         setCustomers((prev) => [clientToCustomer(withNotes), ...prev]);
         setSelectedId(newClient.id);
         setCustomerModalOpen(false);
+        toast.success(
+          "Cliente cadastrado",
+          `${name.trim()} foi cadastrado com sucesso.`,
+        );
       }
     } catch (err: any) {
-      setSaveError(err.response?.data?.detail ?? "Erro ao salvar cliente.");
+      const message =
+        err.response?.data?.detail ||
+        err.response?.data?.error ||
+        "Erro ao salvar cliente.";
+      setSaveError(message);
+      toast.error("Erro ao salvar cliente", message);
     } finally {
       setIsSaving(false);
     }
-  }, [customerForm, editingCustomer, address]);
+  }, [customerForm, editingCustomer, address, toast]);
 
   return (
     <DashboardLayout
@@ -1484,6 +1868,7 @@ export default function ClientesPage() {
           onSavePet={handleSavePet}
           onSaveAppointment={handleSaveAppointment}
           onOpenConversation={handleOpenConversation}
+          activeTab={activeTab}
           onTabChange={handleTabChange}
           loadingPets={loadingPets}
           loadingAppointments={loadingAppointments}

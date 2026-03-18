@@ -15,9 +15,9 @@ import ChatPage from "@/app/(dashboard)/chat/page";
 import ClientesPage from "@/app/(dashboard)/clientes/page";
 import ConfiguracoesPage from "@/app/(dashboard)/configuracoes/page";
 import CalendarioPage from "@/app/(dashboard)/calendario/page";
-import HotelCrechePage from "@/app/(dashboard)/hotel-creche/page";
 import PipelinePage from "@/app/(dashboard)/pipeline/page";
 import AnalyticsPage from "@/app/(dashboard)/_analytics/page";
+import HotelCrechePage from "@/app/(dashboard)/hotel-creche/page";
 import NotFoundPage from "@/app/not-found";
 
 function AuthRoutesLayout() {

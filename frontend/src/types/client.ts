@@ -17,6 +17,12 @@ export interface Client {
   notes?: string
   total_messages?: number
   total_appointments?: number
+  total_pets?: number
+  total_conversations?: number
+  isActive?: boolean
+  totalAppointments?: number
+  totalPets?: number
+  totalConversations?: number
 }
 
 export interface ClientCreate {
@@ -29,6 +35,7 @@ export interface ClientCreate {
 }
 
 export interface ClientUpdate {
+  phone?: string
   name?: string
   email?: string
   company?: string
@@ -81,10 +88,24 @@ export interface Pet {
   species?: string
   breed?: string
   age?: number
+  birthDate?: string
+  birth_date?: string
   size?: string
   weight?: number
+  weightKg?: number
+  weight_kg?: number
   color?: string
-  medical_info?: string
+  notes?: string
+  is_active?: boolean
+  isActive?: boolean
+  medical_info?:
+    | string
+    | {
+        notes?: string
+        conditions?: string[]
+        medications?: string[]
+        allergies?: string[]
+      }
   vaccination_date?: string
   last_vet_visit?: string
   emergency_contact?: string
