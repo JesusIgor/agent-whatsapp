@@ -12,6 +12,15 @@ export interface SentimentKpi {
   positive_pct: number
 }
 
+export interface RevenueRealtime {
+  today: number
+  today_vs_yesterday_pct: number | null
+  appointments_today: number
+  this_week: number
+  this_week_vs_last_pct: number | null
+  appointments_this_week: number
+}
+
 export interface DashboardKpis {
   aiTime: { hours: number; total_conversations: number }
   afterHours: { pct_after_hours: number; pct_weekend: number; total: number }
@@ -19,6 +28,7 @@ export interface DashboardKpis {
   conversion: { total_conversations: number; total_appointments: number; conversion_rate: number; revenue_generated: number }
   topService: { service_name: string; growth_pct: number } | null
   sentiment?: SentimentKpi
+  revenueRealtime?: RevenueRealtime
 }
 
 export interface RevenueByMonth {

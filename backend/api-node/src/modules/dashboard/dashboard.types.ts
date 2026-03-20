@@ -65,3 +65,12 @@ export interface LostClient {
   days_absent: number
   phone: string
 }
+
+export interface RevenueRealtime {
+  today: number
+  today_vs_yesterday_pct: number | null
+  appointments_today: number
+  this_week: number
+  this_week_vs_last_pct: number | null
+  appointments_this_week: number
+}

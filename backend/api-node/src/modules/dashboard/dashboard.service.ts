@@ -10,6 +10,7 @@ import type {
   WhatsappConversion,
   ClientRecurrenceSummary,
   LostClient,
+  RevenueRealtime,
 } from './dashboard.types'
 
 const DAY_NAMES = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb']
@@ -264,6 +265,47 @@ export class DashboardService {
       : 0
 
     return { ...counts, avg_return_days: avg }
+  }
+
+  // ─── KPI: Faturamento hoje e esta semana ─────────────────────────────────────
+  async getRevenueRealtime(companyId: number): Promise<RevenueRealtime> {
+    const rows = await prisma.$queryRaw<Array<{
+      revenue_today: number | null
+      revenue_yesterday: number | null
+      revenue_this_week: number | null
+      revenue_last_week: number | null
+      appointments_today: number | null
+      appointments_this_week: number | null
+    }>>`
+      SELECT revenue_today, revenue_yesterday, revenue_this_week, revenue_last_week,
+             appointments_today, appointments_this_week
+      FROM dashboard_revenue_realtime
+      WHERE company_id = ${companyId}
+      LIMIT 1
+    `
+
+    const data = rows[0]
+    const today = Number(data?.revenue_today ?? 0)
+    const yesterday = Number(data?.revenue_yesterday ?? 0)
+    const thisWeek = Number(data?.revenue_this_week ?? 0)
+    const lastWeek = Number(data?.revenue_last_week ?? 0)
+
+    const todayVsYesterday = yesterday > 0
+      ? parseFloat((((today - yesterday) / yesterday) * 100).toFixed(1))
+      : null
+
+    const thisWeekVsLast = lastWeek > 0
+      ? parseFloat((((thisWeek - lastWeek) / lastWeek) * 100).toFixed(1))
+      : null
+
+    return {
+      today,
+      today_vs_yesterday_pct: todayVsYesterday,
+      appointments_today: Number(data?.appointments_today ?? 0),
+      this_week: thisWeek,
+      this_week_vs_last_pct: thisWeekVsLast,
+      appointments_this_week: Number(data?.appointments_this_week ?? 0),
+    }
   }
 
   async getLostClients(companyId: number, minDays = 45): Promise<LostClient[]> {

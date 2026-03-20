@@ -11,15 +11,16 @@ const sentimentSvc = new SentimentService()
 export async function getKpis(req: Request, res: Response) {
   try {
     const companyId = req.user!.companyId
-    const [aiTime, afterHours, today, conversion, topService, sentiment] = await Promise.all([
+    const [aiTime, afterHours, today, conversion, topService, sentiment, revenueRealtime] = await Promise.all([
       dashboardSvc.getAiTimeWorked(companyId),
       dashboardSvc.getAfterHoursStats(companyId),
       dashboardSvc.getAppointmentsToday(companyId),
       dashboardSvc.getWhatsappConversion(companyId),
       dashboardSvc.getTopServiceThisMonth(companyId),
       sentimentSvc.getSentimentKpi(companyId),
+      dashboardSvc.getRevenueRealtime(companyId),
     ])
-    res.json({ aiTime, afterHours, today, conversion, topService, sentiment })
+    res.json({ aiTime, afterHours, today, conversion, topService, sentiment, revenueRealtime })
   } catch (err) {
     res.status(500).json({ error: String(err) })
   }

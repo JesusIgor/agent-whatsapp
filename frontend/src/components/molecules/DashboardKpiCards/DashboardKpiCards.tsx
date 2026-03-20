@@ -1,6 +1,6 @@
 "use client";
 
-import { TrendingUp, Clock, Zap, MessageCircle, ThermometerSun } from "lucide-react";
+import { TrendingUp, Clock, Zap, MessageCircle, ThermometerSun, DollarSign } from "lucide-react";
 import { cn } from "@/lib/cn";
 import { usePlan } from "@/hooks/usePlan";
 import type { DashboardKpis } from "@/services/dashboardService";
@@ -52,13 +52,23 @@ function KpiCard({
   );
 }
 
+function formatCurrency(value: number) {
+  return value.toLocaleString('pt-BR', {
+    style: 'currency',
+    currency: 'BRL',
+    minimumFractionDigits: 0,
+    maximumFractionDigits: 0,
+  });
+}
+
 export function DashboardKpiCards({ data, loading }: Props) {
   const { isPro } = usePlan();
+  const totalCards = isPro ? 6 : 5;
 
   if (loading || !data) {
     return (
-      <div className={cn("grid grid-cols-2 gap-4", isPro ? "lg:grid-cols-5" : "lg:grid-cols-4")}>
-        {[...Array(isPro ? 5 : 4)].map((_, i) => (
+      <div className="grid grid-cols-2 gap-4 lg:grid-cols-[repeat(auto-fit,minmax(180px,1fr))]">
+        {[...Array(totalCards)].map((_, i) => (
           <div
             key={i}
             className="h-32 animate-pulse rounded-lg border border-[#727B8E1A] bg-[#f3f4f6] dark:border-[#40485A] dark:bg-[#1f2129]"
@@ -68,10 +78,10 @@ export function DashboardKpiCards({ data, loading }: Props) {
     );
   }
 
-  const { today, aiTime, afterHours, topService, conversion, sentiment } = data;
+  const { today, aiTime, afterHours, topService, conversion, sentiment, revenueRealtime } = data;
 
   return (
-    <div className={cn("grid grid-cols-2 gap-4", isPro ? "lg:grid-cols-5" : "lg:grid-cols-4")}>
+    <div className="grid grid-cols-2 gap-4 lg:grid-cols-[repeat(auto-fit,minmax(180px,1fr))]">
       {/* KPI 1: Confirmados hoje */}
       <KpiCard
         title="Confirmados hoje"
@@ -202,7 +212,49 @@ export function DashboardKpiCards({ data, loading }: Props) {
         )}
       </KpiCard>
 
-      {/* KPI 5: Temperatura dos clientes (somente plano Pro) */}
+      {/* KPI 5: Faturamento */}
+      <KpiCard
+        title="Faturamento"
+        icon={<DollarSign className="h-3.5 w-3.5" />}
+      >
+        {!revenueRealtime ? (
+          <EmptyValue label="Sem dados de faturamento" />
+        ) : (
+          <div className="flex gap-0">
+            <div className="flex-1 pr-3">
+              <p className="text-[10px] text-[#9ca3af] mb-1">hoje</p>
+              <p className="text-2xl font-bold text-[#434A57] dark:text-[#f5f9fc] leading-none">
+                {formatCurrency(revenueRealtime.today)}
+              </p>
+              {revenueRealtime.today_vs_yesterday_pct !== null ? (
+                <p className={`mt-1 text-xs font-medium ${revenueRealtime.today_vs_yesterday_pct >= 0 ? 'text-emerald-500' : 'text-red-500'}`}>
+                  {revenueRealtime.today_vs_yesterday_pct >= 0 ? '↑' : '↓'} {Math.abs(revenueRealtime.today_vs_yesterday_pct)}% vs ontem
+                </p>
+              ) : (
+                <p className="mt-1 text-[10px] text-[#9ca3af]">sem dado anterior</p>
+              )}
+            </div>
+
+            <div className="w-px bg-[#727B8E1A] dark:bg-[#40485A] mx-1" />
+
+            <div className="flex-1 pl-3">
+              <p className="text-[10px] text-[#9ca3af] mb-1">esta semana</p>
+              <p className="text-2xl font-bold text-[#434A57] dark:text-[#f5f9fc] leading-none">
+                {formatCurrency(revenueRealtime.this_week)}
+              </p>
+              {revenueRealtime.this_week_vs_last_pct !== null ? (
+                <p className={`mt-1 text-xs font-medium ${revenueRealtime.this_week_vs_last_pct >= 0 ? 'text-emerald-500' : 'text-red-500'}`}>
+                  {revenueRealtime.this_week_vs_last_pct >= 0 ? '↑' : '↓'} {Math.abs(revenueRealtime.this_week_vs_last_pct)}% vs ant.
+                </p>
+              ) : (
+                <p className="mt-1 text-[10px] text-[#9ca3af]">sem dado anterior</p>
+              )}
+            </div>
+          </div>
+        )}
+      </KpiCard>
+
+      {/* KPI 6: Temperatura dos clientes (somente plano Pro) */}
       {isPro && (
         <KpiCard
           title="Temperatura dos clientes"
