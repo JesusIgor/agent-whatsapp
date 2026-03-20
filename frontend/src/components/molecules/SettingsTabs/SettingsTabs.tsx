@@ -12,7 +12,7 @@ export type SettingsTabId =
 const TABS: { id: SettingsTabId; label: string, disabled?: boolean}[] = [
   { id: 'servicos', label: 'Serviços' },
   { id: 'empresa', label: 'Empresa' },
-  { id: 'horarios', label: 'Horários' },
+  { id: 'horarios', label: 'Agenda' },
   { id: 'hospedagem', label: 'Hospedagem' },
   { id: 'whatsapp', label: 'WhatsApp' },
   { id: 'pagamento', label: 'Pagamento', disabled: true },

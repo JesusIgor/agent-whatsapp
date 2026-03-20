@@ -7,8 +7,8 @@ interface CalendarHeaderProps {
   onPrevMonth: () => void;
   onNextMonth: () => void;
   onToday: () => void;
-  activeView: "month" | "week" | "day";
-  onViewChange: (view: "month" | "week" | "day") => void;
+  activeView: "month" | "week";
+  onViewChange: (view: "month" | "week") => void;
   stats: { concluidos: number; confirmados: number; pendentes: number };
 }
 
@@ -83,9 +83,10 @@ export function CalendarHeader({
         </div>
 
         <div className="flex items-center gap-1 rounded-xl p-1 shrink-0">
-          {(["month", "week", "day"] as const).map((view) => (
+          {(["month", "week"] as const).map((view) => (
             <button
               key={view}
+              type="button"
               onClick={() => onViewChange(view)}
               className={`flex h-9 items-center justify-center rounded-lg px-4 text-sm transition-all ${
                 activeView === view
@@ -93,7 +94,7 @@ export function CalendarHeader({
                   : "font-medium text-[#727B8E] dark:text-[#8a94a6] hover:text-[#434A57] dark:hover:text-[#f5f9fc]"
               }`}
             >
-              {view === "month" ? "Mês" : view === "week" ? "Semana" : "Dia"}
+              {view === "month" ? "Mês" : "Semana"}
             </button>
           ))}
         </div>

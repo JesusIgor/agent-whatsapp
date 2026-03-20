@@ -47,12 +47,11 @@ import {
   lodgingConfigService,
   type LodgingConfig,
 } from "@/services/lodgingService";
+import type { AgendaDay } from "@/services/settingsService";
 import { useAuthContext } from "@/contexts/AuthContext";
+import { AbaAgenda } from "./AbaAgenda";
 import type { Petshop } from "@/types";
 import type { Specialty } from "@/types/petshop";
-type PetshopCustomCapacityHours = {
-  hourly?: { [weekday: string]: { [hour: string]: number } };
-} | null;
 import type { Service } from "@/types";
 import type { CapacityRule } from "@/types/petshop";
 
@@ -355,10 +354,6 @@ function SettingsProfileSidebar({
   onNovoServico,
   showNovoServico,
   onLogout,
-  onGenerateSlots,
-  generatingSlots,
-  generateDays,
-  onGenerateDaysChange,
 }: {
   petshop: Petshop | null;
   loading?: boolean;
@@ -409,43 +404,6 @@ function SettingsProfileSidebar({
           <Crown className="h-4 w-4" />
           Novo serviço
         </Button>
-      )}
-
-      {/* Generate slots (below user photo) */}
-      {onGenerateSlots && (
-        <div className="rounded-xl border border-[#727B8E]/10 dark:border-[#40485A] bg-[#F4F6F9] dark:bg-[#212225] p-3 flex flex-col gap-2">
-          <p className="text-[11px] font-semibold uppercase tracking-wide text-[#727B8E] dark:text-[#8a94a6]">
-            Disponibilidade
-          </p>
-          <button
-            type="button"
-            disabled={generatingSlots}
-            onClick={onGenerateSlots}
-            className="flex w-full items-center justify-center gap-2 rounded-lg border border-[#1E62EC]/20 bg-[#1E62EC]/10 px-3 py-2 text-sm font-medium text-[#1E62EC] hover:bg-[#1E62EC]/20 transition-colors disabled:opacity-50"
-          >
-            {generatingSlots ? (
-              <><Loader2 className="h-3.5 w-3.5 animate-spin" />Gerando...</>
-            ) : (
-              <><CalendarClock className="h-3.5 w-3.5" />Gerar slots</>
-            )}
-          </button>
-          <div className="flex items-center gap-2">
-            <label className="text-[11px] text-[#727B8E] dark:text-[#8a94a6] whitespace-nowrap">
-              Dias a gerar
-            </label>
-            <input
-              type="number"
-              min={1}
-              max={60}
-              value={generateDays ?? 30}
-              onChange={(e) => onGenerateDaysChange?.(Math.min(60, Math.max(1, Number(e.target.value))))}
-              className="w-14 rounded-lg border border-[#727B8E]/20 bg-white dark:bg-[#1A1B1D] dark:border-[#40485A] px-2 py-1 text-xs text-[#434A57] dark:text-[#f5f9fc] text-center focus:border-[#1E62EC] focus:outline-none"
-            />
-          </div>
-          <p className="text-[10px] text-[#727B8E] dark:text-[#8a94a6] leading-tight">
-            Atualizado automaticamente toda segunda-feira.
-          </p>
-        </div>
       )}
 
       {/* Spacer */}
@@ -523,7 +481,6 @@ function ServicosContent({
   const [newSpecialtyName, setNewSpecialtyName] = useState("");
   const [newSpecialtyColor, setNewSpecialtyColor] = useState("#1E62EC");
   const [creatingSpecialty, setCreatingSpecialty] = useState(false);
-  const [newSpSlotConfig, setNewSpSlotConfig] = useState<Record<number, DaySlotConfig>>({});
 
   // Specialty edit state
   const [editSpecialtyOpen, setEditSpecialtyOpen] = useState(false);
@@ -532,10 +489,6 @@ function ServicosContent({
   const [spEditName, setSpEditName] = useState("");
   const [spEditColor, setSpEditColor] = useState("#1E62EC");
   const [spEditDescription, setSpEditDescription] = useState("");
-  const [spEditDays, setSpEditDays] =
-    useState<Record<number, DaySlotConfig>>({});
-  const [existingCapRules, setExistingCapRules] = useState<CapacityRule[]>([]);
-  const [loadingSpEdit, setLoadingSpEdit] = useState(false);
   const [savingSpEdit, setSavingSpEdit] = useState(false);
 
   // Filter: Hospedagem is managed in its own tab
@@ -594,11 +547,7 @@ function ServicosContent({
     }
     setCreatingSpecialty(true);
     try {
-      const newId = await onCreateSpecialty(newSpecialtyName.trim(), newSpecialtyColor);
-      const rules = slotConfigToRules(newSpSlotConfig);
-      if (newId && rules.length > 0) {
-        await specialtyService.bulkUpsertCapacityRules(newId, rules);
-      }
+      await onCreateSpecialty(newSpecialtyName.trim(), newSpecialtyColor);
       toast.success(
         "Especialidade criada!",
         `"${newSpecialtyName}" adicionada.`,
@@ -606,7 +555,6 @@ function ServicosContent({
       setNewSpecialtyModal(false);
       setNewSpecialtyName("");
       setNewSpecialtyColor("#1E62EC");
-      setNewSpSlotConfig({});
     } catch (err: any) {
       toast.error(
         "Erro",
@@ -637,24 +585,12 @@ function ServicosContent({
     }
   };
 
-  const handleOpenEditSpecialty = async (sp: Specialty) => {
+  const handleOpenEditSpecialty = (sp: Specialty) => {
     setEditingSpecialtyData(sp);
     setSpEditName(sp.name);
     setSpEditColor(sp.color || "#1E62EC");
     setSpEditDescription(sp.description || "");
-    setSpEditDays(buildInitialSlotConfig(petshop?.businessHours, []));
-    setExistingCapRules([]);
     setEditSpecialtyOpen(true);
-    setLoadingSpEdit(true);
-    try {
-      const rules = await specialtyService.listCapacityRules(sp.id);
-      setExistingCapRules(rules);
-      setSpEditDays(buildInitialSlotConfig(petshop?.businessHours, rules));
-    } catch {
-      // keep defaults
-    } finally {
-      setLoadingSpEdit(false);
-    }
   };
 
   const handleSaveSpecialtyEdit = async () => {
@@ -666,14 +602,9 @@ function ServicosContent({
         color: spEditColor,
         description: spEditDescription || undefined,
       });
-      const rules = slotConfigToRules(spEditDays);
-      await specialtyService.bulkUpsertCapacityRules(
-        editingSpecialtyData.id,
-        rules,
-      );
       toast.success(
         "Especialidade salva!",
-        "Configurações e disponibilidade atualizadas.",
+        "Configurações atualizadas.",
       );
       setEditSpecialtyOpen(false);
       await onRefreshSpecialties();
@@ -764,10 +695,7 @@ function ServicosContent({
 
           <button
             type="button"
-            onClick={() => {
-              setNewSpSlotConfig(buildInitialSlotConfig(petshop?.businessHours, []));
-              setNewSpecialtyModal(true);
-            }}
+            onClick={() => setNewSpecialtyModal(true)}
             className="mt-1 flex items-center gap-1.5 rounded-xl border border-dashed border-[#727B8E]/20 px-3 py-2.5 text-sm text-[#727B8E] hover:border-[#1E62EC]/40 hover:text-[#1E62EC] transition-colors"
           >
             <Plus className="h-3.5 w-3.5" />
@@ -902,7 +830,6 @@ function ServicosContent({
         onClose={() => {
           setNewSpecialtyModal(false);
           setNewSpecialtyName("");
-          setNewSpSlotConfig({});
         }}
         title="Nova especialidade"
         className="max-w-[560px]"
@@ -926,19 +853,6 @@ function ServicosContent({
                 className="h-10 w-20 cursor-pointer rounded border border-[#727B8E]/20"
               />
             </div>
-          </div>
-          <div>
-            <p className="mb-2 text-sm font-medium text-[#434A57] dark:text-[#f5f9fc]">
-              Disponibilidade por hora
-            </p>
-            <p className="mb-3 text-xs text-[#727B8E]">
-              Configure as vagas por horário (sincronizado com o horário comercial). Pode ser ajustado depois.
-            </p>
-            <HourlyCapacityEditor
-              businessHours={petshop?.businessHours}
-              config={newSpSlotConfig}
-              onChange={setNewSpSlotConfig}
-            />
           </div>
           <div className="flex justify-end gap-2">
             <Button
@@ -1066,14 +980,7 @@ function ServicosContent({
         className="max-w-[560px]"
       >
         <div className="flex max-h-[70vh] flex-col gap-4 overflow-y-auto pr-1">
-          {loadingSpEdit ? (
-            <div className="flex items-center gap-2 py-4 text-sm text-[#727B8E]">
-              <Loader2 className="h-4 w-4 animate-spin" /> Carregando
-              configurações...
-            </div>
-          ) : (
-            <>
-              <Input
+          <Input
                 label="Nome"
                 value={spEditName}
                 onChange={(e) => setSpEditName(e.target.value)}
@@ -1096,26 +1003,6 @@ function ServicosContent({
                 onChange={(e) => setSpEditDescription(e.target.value)}
                 placeholder="Descrição da especialidade"
               />
-              <div>
-                <p className="mb-1 text-sm font-semibold text-[#434A57] dark:text-[#f5f9fc]">
-                  Slots por hora
-                </p>
-                <p className="mb-3 text-xs text-[#727B8E] dark:text-[#8a94a6]">
-                  Clique em cada horário para ativar/desativar. O número ao lado é a capacidade (vagas). Dias fechados no horário comercial aparecem desabilitados.
-                </p>
-                {!petshop?.businessHours ? (
-                  <p className="rounded-lg bg-amber-50 dark:bg-amber-950/20 px-3 py-2 text-xs text-amber-600 dark:text-amber-400">
-                    Configure o horário de funcionamento na aba Horários para habilitar os slots por hora.
-                  </p>
-                ) : (
-                  <HourlyCapacityEditor
-                    businessHours={petshop?.businessHours}
-                    config={spEditDays}
-                    onChange={setSpEditDays}
-                    disabled={savingSpEdit}
-                  />
-                )}
-              </div>
               <div className="flex justify-end gap-2 pt-2">
                 <Button
                   variant="outline"
@@ -1138,8 +1025,6 @@ function ServicosContent({
                   )}
                 </Button>
               </div>
-            </>
-          )}
         </div>
       </Modal>
     </>
@@ -1265,6 +1150,17 @@ function EmpresaContent({
             value={emergencyContact}
             onChange={(e) => setEmergencyContact(maskPhone(e.target.value))}
           />
+          <div className="sm:col-span-2">
+            <Input
+              label="Suporte Auzap"
+              value={petshop?.company?.pangeiaSupport ?? ""}
+              disabled
+              className="bg-gray-100 dark:bg-[#2a2b2d]"
+            />
+            <p className="mt-1 text-xs text-[#727B8E] dark:text-[#8a94a6]">
+              Número de suporte configurado pela Auzap. Não editável.
+            </p>
+          </div>
         </div>
       </section>
       <section>
@@ -1786,220 +1682,6 @@ function PagamentoContent({
   );
 }
 
-function HorariosContent({
-  petshop,
-  loading,
-  onSave,
-}: {
-  petshop: Petshop | null;
-  loading?: boolean;
-  onSave: (data: {
-    business_hours: Record<
-      string,
-      { open: string; close: string } | { closed: boolean }
-    >;
-    default_capacity_per_hour?: number;
-    custom_capacity_hours?: PetshopCustomCapacityHours;
-  }) => Promise<void>;
-}) {
-  const toast = useToast();
-  const [saving, setSaving] = useState(false);
-
-  const DIAS: { key: string; label: string; short: string }[] = [
-    { key: "monday", label: "Segunda-feira", short: "Seg" },
-    { key: "tuesday", label: "Terça-feira", short: "Ter" },
-    { key: "wednesday", label: "Quarta-feira", short: "Qua" },
-    { key: "thursday", label: "Quinta-feira", short: "Qui" },
-    { key: "friday", label: "Sexta-feira", short: "Sex" },
-    { key: "saturday", label: "Sábado", short: "Sáb" },
-    { key: "sunday", label: "Domingo", short: "Dom" },
-  ];
-
-  const [hours, setHours] = useState<
-    Record<string, { enabled: boolean; open: string; close: string }>
-  >(() => {
-    const defaults = Object.fromEntries(
-      DIAS.map(({ key }) => [
-        key,
-        {
-          enabled: ["monday", "tuesday", "wednesday", "thursday", "friday"].includes(key),
-          open: "09:00",
-          close: "18:00",
-        },
-      ]),
-    );
-    if (petshop?.businessHours) {
-      Object.entries(petshop.businessHours).forEach(([key, val]) => {
-        if (val && typeof val === "object" && val.open && val.close) {
-          defaults[key] = { enabled: true, open: val.open, close: val.close };
-        } else if (val && typeof val === "object" && val.closed) {
-          defaults[key] = { ...defaults[key], enabled: false };
-        }
-      });
-    }
-    return defaults;
-  });
-
-  useEffect(() => {
-    if (!petshop) return;
-    const initial = Object.fromEntries(
-      DIAS.map(({ key }) => [
-        key,
-        {
-          enabled: ["monday", "tuesday", "wednesday", "thursday", "friday"].includes(key),
-          open: "09:00",
-          close: "18:00",
-        },
-      ]),
-    );
-    if (petshop.businessHours) {
-      Object.entries(petshop.businessHours).forEach(([key, val]) => {
-        if (val && typeof val === "object" && val.open && val.close)
-          initial[key] = { enabled: true, open: val.open, close: val.close };
-        else if (val && typeof val === "object" && val.closed)
-          initial[key] = { ...initial[key], enabled: false };
-      });
-    }
-    setHours(initial);
-  }, [petshop]);
-
-  const handleToggle = (key: string) => {
-    setHours((prev) => ({
-      ...prev,
-      [key]: { ...prev[key], enabled: !prev[key].enabled },
-    }));
-  };
-
-  const handleTimeChange = (key: string, field: "open" | "close", value: string) => {
-    setHours((prev) => ({ ...prev, [key]: { ...prev[key], [field]: value } }));
-  };
-
-  const handleSave = async () => {
-    setSaving(true);
-    try {
-      const business_hours: Record<string, { open: string; close: string } | { closed: boolean }> = {};
-      Object.entries(hours).forEach(([key, val]) => {
-        if (val.enabled) business_hours[key] = { open: val.open, close: val.close };
-        else business_hours[key] = { closed: true };
-      });
-      await onSave({ business_hours });
-      toast.success("Horários salvos!", "As configurações foram atualizadas.");
-    } catch {
-      toast.error("Erro ao salvar", "Não foi possível salvar os horários.");
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  const handleCancel = () => {
-    if (!petshop) return;
-    const initial = Object.fromEntries(
-      DIAS.map(({ key }) => [key, { enabled: ["monday","tuesday","wednesday","thursday","friday"].includes(key), open: "09:00", close: "18:00" }])
-    );
-    if (petshop.businessHours) {
-      Object.entries(petshop.businessHours).forEach(([key, val]) => {
-        if (val && typeof val === "object" && val.open && val.close)
-          initial[key] = { enabled: true, open: val.open, close: val.close };
-        else if (val && typeof val === "object" && val.closed)
-          initial[key] = { ...initial[key], enabled: false };
-      });
-    }
-    setHours(initial);
-  };
-
-  if (loading) {
-    return (
-      <div className="flex items-center gap-2 text-sm text-[#727B8E] dark:text-[#8a94a6]">
-        <Loader2 className="h-4 w-4 animate-spin" />
-        Carregando...
-      </div>
-    );
-  }
-
-  return (
-    <div className="flex flex-col gap-6 pb-8">
-      <div>
-        <p className="mb-3 text-[11px] font-semibold uppercase tracking-wider text-[#727B8E] dark:text-[#8a94a6]">
-          Horário de Funcionamento
-        </p>
-        <div className="space-y-2">
-          {DIAS.map(({ key, label }) => {
-            const day = hours[key];
-            const enabled = day?.enabled ?? false;
-            return (
-              <div
-                key={key}
-                className={cn(
-                  "rounded-xl border p-4 transition-all",
-                  enabled
-                    ? "border-[#727B8E]/10 dark:border-[#40485A] bg-white dark:bg-[#1A1B1D]"
-                    : "border-[#727B8E]/8 dark:border-[#40485A]/40 bg-[#F4F6F9] dark:bg-[#212225]/50",
-                )}
-              >
-                <div className="flex flex-wrap items-center gap-3">
-                  {/* Toggle switch */}
-                  <label className="relative inline-flex shrink-0 cursor-pointer items-center">
-                    <input
-                      type="checkbox"
-                      className="sr-only peer"
-                      checked={enabled}
-                      onChange={() => handleToggle(key)}
-                    />
-                    <div className="w-10 h-5 bg-gray-200 peer-focus:outline-none rounded-full peer dark:bg-gray-700 peer-checked:after:translate-x-5 peer-checked:after:border-white after:content-[''] after:absolute after:top-0.5 after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all dark:border-gray-600 peer-checked:bg-[#1E62EC]"></div>
-                  </label>
-                  <span className={cn(
-                    "w-28 text-sm font-medium",
-                    enabled ? "text-[#434A57] dark:text-[#f5f9fc]" : "text-[#727B8E] dark:text-[#8a94a6]",
-                  )}>
-                    {label}
-                  </span>
-                  {!enabled ? (
-                    <span className="rounded-full bg-[#727B8E]/10 px-2.5 py-0.5 text-[10px] font-medium text-[#727B8E]">
-                      Fechado
-                    </span>
-                  ) : (
-                    <div className="flex items-center gap-2">
-                      <input
-                        type="time"
-                        value={day?.open || "09:00"}
-                        onChange={(e) => handleTimeChange(key, "open", e.target.value)}
-                        className="rounded-lg border border-[#727B8E]/20 bg-[#F4F6F9] dark:bg-[#212225] px-2.5 py-1.5 text-sm text-[#434A57] dark:text-[#f5f9fc] focus:border-[#1E62EC] focus:outline-none"
-                      />
-                      <span className="text-xs text-[#727B8E]">–</span>
-                      <input
-                        type="time"
-                        value={day?.close || "18:00"}
-                        onChange={(e) => handleTimeChange(key, "close", e.target.value)}
-                        className="rounded-lg border border-[#727B8E]/20 bg-[#F4F6F9] dark:bg-[#212225] px-2.5 py-1.5 text-sm text-[#434A57] dark:text-[#f5f9fc] focus:border-[#1E62EC] focus:outline-none"
-                      />
-                    </div>
-                  )}
-                </div>
-              </div>
-            );
-          })}
-        </div>
-      </div>
-
-      <div className="flex items-center gap-3 pt-2">
-        <Button type="button" variant="outline" disabled={saving} onClick={handleCancel}>
-          Cancelar
-        </Button>
-        <Button type="button" onClick={handleSave} disabled={saving}>
-          {saving ? (
-            <>
-              <Loader2 className="h-4 w-4 animate-spin mr-2" />
-              Salvando...
-            </>
-          ) : (
-            "Salvar"
-          )}
-        </Button>
-      </div>
-    </div>
-  );
-}
-
 interface ChatMessage {
   id: string;
   role: "user" | "assistant";
@@ -2207,21 +1889,21 @@ const LODGING_DAY_NAMES = [
   { dayOfWeek: 0, key: "sunday", label: "Domingo" },
 ] as const;
 
-function isLodgingDayClosed(
-  businessHours: Record<string, any> | undefined,
-  dayKey: string,
+/** Dias fechados vêm da aba Agenda (`petshop_business_hours`). */
+function isLodgingDayClosedFromAgenda(
+  agendaDays: AgendaDay[] | null,
+  dayOfWeek: number,
 ): boolean {
-  if (!businessHours) return false;
-  const day = businessHours[dayKey];
-  if (!day) return false;
-  return day.closed === true || (!day.open && !day.close);
+  if (!agendaDays || agendaDays.length === 0) return true;
+  const row = agendaDays.find((d) => d.day_of_week === dayOfWeek);
+  if (!row) return true;
+  return row.is_closed;
 }
 
-function HospedagemContent({ petshop }: { petshop: Petshop | null }) {
+function HospedagemContent() {
   const toast = useToast();
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
-  const [savingCapacity, setSavingCapacity] = useState(false);
 
   const [hotelEnabled, setHotelEnabled] = useState(false);
   const [hotelDailyRate, setHotelDailyRate] = useState("");
@@ -2230,6 +1912,9 @@ function HospedagemContent({ petshop }: { petshop: Petshop | null }) {
   const [hotelCapacities, setHotelCapacities] = useState<
     Record<number, number>
   >({});
+  const [hotelActiveByDay, setHotelActiveByDay] = useState<Record<number, boolean>>(
+    {},
+  );
 
   const [daycareEnabled, setDaycareEnabled] = useState(false);
   const [daycareDailyRate, setDaycareDailyRate] = useState("");
@@ -2238,13 +1923,34 @@ function HospedagemContent({ petshop }: { petshop: Petshop | null }) {
   const [daycareCapacities, setDaycareCapacities] = useState<
     Record<number, number>
   >({});
+  const [daycareActiveByDay, setDaycareActiveByDay] = useState<
+    Record<number, boolean>
+  >({});
   const [defaultHotelCap, setDefaultHotelCap] = useState(5);
   const [defaultDaycareCap, setDefaultDaycareCap] = useState(5);
+  const [agendaDays, setAgendaDays] = useState<AgendaDay[] | null>(null);
+
+  const coerceIsActive = (raw: unknown): boolean => {
+    // API deveria vir como boolean, mas pode chegar como string dependendo de como foi serializado.
+    // Se vier indefinido, preserva comportamento anterior: assume ativo (true).
+    if (raw === undefined) return true
+    return (
+      raw === true ||
+      raw === 1 ||
+      raw === '1' ||
+      raw === 'true'
+    )
+  }
 
   useEffect(() => {
-    lodgingConfigService
-      .get()
-      .then((cfg: LodgingConfig) => {
+    let cancelled = false;
+    setLoading(true);
+    Promise.all([
+      lodgingConfigService.get(),
+      settingsService.getAgenda().catch(() => null),
+    ])
+      .then(([cfg, agenda]) => {
+        if (cancelled) return;
         setHotelEnabled(cfg.hotel_enabled);
         setHotelDailyRate(
           cfg.hotel_daily_rate != null ? String(cfg.hotel_daily_rate) : "",
@@ -2259,12 +1965,22 @@ function HospedagemContent({ petshop }: { petshop: Petshop | null }) {
         setDaycareCheckoutTime(cfg.daycare_checkout_time);
         const hCap: Record<number, number> = {};
         const dCap: Record<number, number> = {};
+        const hActive: Record<number, boolean> = {};
+        const dActive: Record<number, boolean> = {};
         cfg.capacities.forEach((c) => {
-          if (c.type === "hotel") hCap[c.day_of_week] = c.max_capacity;
-          else dCap[c.day_of_week] = c.max_capacity;
+          if (c.type === "hotel") {
+            hCap[c.day_of_week] = c.max_capacity;
+            hActive[c.day_of_week] = coerceIsActive(c.is_active);
+          } else {
+            dCap[c.day_of_week] = c.max_capacity;
+            dActive[c.day_of_week] = coerceIsActive(c.is_active);
+          }
         });
         setHotelCapacities(hCap);
         setDaycareCapacities(dCap);
+        setHotelActiveByDay(hActive);
+        setDaycareActiveByDay(dActive);
+        setAgendaDays(agenda?.days ?? null);
       })
       .catch(() =>
         toast.error(
@@ -2272,16 +1988,34 @@ function HospedagemContent({ petshop }: { petshop: Petshop | null }) {
           "Não foi possível carregar as configurações de hospedagem.",
         ),
       )
-      .finally(() => setLoading(false));
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const handleSaveConfig = async () => {
+  const handleSaveLodging = async () => {
     setSaving(true);
     try {
+      let daysForSave = agendaDays;
+      if (!daysForSave) {
+        try {
+          const agenda = await settingsService.getAgenda();
+          daysForSave = agenda.days;
+        } catch {
+          daysForSave = null;
+        }
+      }
+
+      // Salva config (enabled/rates/horários)
       await lodgingConfigService.update({
         hotel_enabled: hotelEnabled,
-        hotel_daily_rate: hotelDailyRate ? Number(hotelDailyRate) : undefined,
+        hotel_daily_rate: hotelDailyRate
+          ? Number(hotelDailyRate)
+          : undefined,
         hotel_checkin_time: hotelCheckinTime,
         hotel_checkout_time: hotelCheckoutTime,
         daycare_enabled: daycareEnabled,
@@ -2291,59 +2025,68 @@ function HospedagemContent({ petshop }: { petshop: Petshop | null }) {
         daycare_checkin_time: daycareCheckinTime,
         daycare_checkout_time: daycareCheckoutTime,
       });
+
+      // Salva capacidades (hotel/daycare) consolidando agenda (petshop_business_hours) + is_active
+      const capacities = LODGING_DAY_NAMES.flatMap(({ dayOfWeek }) => {
+        const closed = isLodgingDayClosedFromAgenda(daysForSave, dayOfWeek);
+        const hotelActive = !closed && (hotelActiveByDay[dayOfWeek] ?? true);
+        const daycareActive =
+          !closed && (daycareActiveByDay[dayOfWeek] ?? true);
+
+        return [
+          {
+            type: "hotel" as const,
+            day_of_week: dayOfWeek,
+            max_capacity: hotelActive
+              ? hotelCapacities[dayOfWeek] ?? 0
+              : 0,
+            is_active: hotelActive,
+          },
+          {
+            type: "daycare" as const,
+            day_of_week: dayOfWeek,
+            max_capacity: daycareActive
+              ? daycareCapacities[dayOfWeek] ?? 0
+              : 0,
+            is_active: daycareActive,
+          },
+        ];
+      });
+
+      await lodgingConfigService.upsertCapacities(capacities);
+
       toast.success(
-        "Configurações salvas!",
-        "As configurações de hospedagem foram atualizadas.",
+        "Hospedagem salva!",
+        "Configurações e vagas atualizadas com sucesso.",
       );
     } catch {
-      toast.error("Erro", "Não foi possível salvar as configurações.");
+      toast.error("Erro", "Não foi possível salvar a hospedagem.");
     } finally {
       setSaving(false);
     }
   };
 
-  const handleSaveCapacities = async () => {
-    setSavingCapacity(true);
-    try {
-      const bh = petshop?.businessHours as Record<string, any> | undefined;
-      const capacities = LODGING_DAY_NAMES.flatMap(({ dayOfWeek, key }) => {
-        const closed = isLodgingDayClosed(bh, key);
-        return [
-          {
-            type: "hotel" as const,
-            day_of_week: dayOfWeek,
-            max_capacity: closed ? 0 : (hotelCapacities[dayOfWeek] ?? 0),
-            is_active: !closed,
-          },
-          {
-            type: "daycare" as const,
-            day_of_week: dayOfWeek,
-            max_capacity: closed ? 0 : (daycareCapacities[dayOfWeek] ?? 0),
-            is_active: !closed,
-          },
-        ];
-      });
-      await lodgingConfigService.upsertCapacities(capacities);
-      toast.success("Vagas salvas!", "A capacidade por dia foi atualizada.");
-    } catch {
-      toast.error("Erro", "Não foi possível salvar as vagas.");
-    } finally {
-      setSavingCapacity(false);
-    }
-  };
-
   const applyDefaultCapacities = (type: "hotel" | "daycare") => {
-    const bh = petshop?.businessHours as Record<string, any> | undefined;
     if (type === "hotel") {
       const next: Record<number, number> = { ...hotelCapacities };
-      LODGING_DAY_NAMES.forEach(({ dayOfWeek, key }) => {
-        if (!isLodgingDayClosed(bh, key)) next[dayOfWeek] = defaultHotelCap;
+      LODGING_DAY_NAMES.forEach(({ dayOfWeek }) => {
+        if (
+          !isLodgingDayClosedFromAgenda(agendaDays, dayOfWeek) &&
+          (hotelActiveByDay[dayOfWeek] ?? true)
+        ) {
+          next[dayOfWeek] = defaultHotelCap;
+        }
       });
       setHotelCapacities(next);
     } else {
       const next: Record<number, number> = { ...daycareCapacities };
-      LODGING_DAY_NAMES.forEach(({ dayOfWeek, key }) => {
-        if (!isLodgingDayClosed(bh, key)) next[dayOfWeek] = defaultDaycareCap;
+      LODGING_DAY_NAMES.forEach(({ dayOfWeek }) => {
+        if (
+          !isLodgingDayClosedFromAgenda(agendaDays, dayOfWeek) &&
+          (daycareActiveByDay[dayOfWeek] ?? true)
+        ) {
+          next[dayOfWeek] = defaultDaycareCap;
+        }
       });
       setDaycareCapacities(next);
     }
@@ -2357,8 +2100,6 @@ function HospedagemContent({ petshop }: { petshop: Petshop | null }) {
       </div>
     );
   }
-
-  const bh = petshop?.businessHours as Record<string, any> | undefined;
 
   return (
     <div className="flex flex-col gap-6">
@@ -2482,24 +2223,6 @@ function HospedagemContent({ petshop }: { petshop: Petshop | null }) {
         )}
       </div>
 
-      <div className="flex justify-end">
-        <Button
-          onClick={handleSaveConfig}
-          disabled={saving}
-          size="sm"
-          className="flex items-center gap-2"
-        >
-          {saving ? (
-            <>
-              <Loader2 className="h-3 w-3 animate-spin" />
-              Salvando...
-            </>
-          ) : (
-            "Salvar configurações"
-          )}
-        </Button>
-      </div>
-
       {/* ─── Vagas por dia ─── */}
       {(hotelEnabled || daycareEnabled) && (
         <div className="rounded-xl border border-[#727B8E]/10 bg-white dark:border-[#40485A] dark:bg-[#1A1B1D] p-5 flex flex-col gap-4">
@@ -2509,7 +2232,8 @@ function HospedagemContent({ petshop }: { petshop: Petshop | null }) {
                 Vagas por dia
               </p>
               <p className="text-xs text-[#727B8E] dark:text-[#8a94a6] mt-0.5">
-                Dias fechados (conforme horário comercial) são desabilitados automaticamente.
+                Dias fechados seguem a aba Agenda (horário na base). Se a agenda não
+                carregar, usa-se o horário salvo no cadastro do petshop.
               </p>
             </div>
           </div>
@@ -2581,19 +2305,35 @@ function HospedagemContent({ petshop }: { petshop: Petshop | null }) {
                 </tr>
               </thead>
               <tbody>
-                {LODGING_DAY_NAMES.map(({ dayOfWeek, key, label }) => {
-                  const closed = isLodgingDayClosed(bh, key);
+                {LODGING_DAY_NAMES.map(({ dayOfWeek, label }) => {
+                  const closed = isLodgingDayClosedFromAgenda(agendaDays, dayOfWeek);
+                  const hotelInactive = !(hotelActiveByDay[dayOfWeek] ?? true);
+                  const daycareInactive = !(daycareActiveByDay[dayOfWeek] ?? true);
+                  const blockedByCapacity =
+                    (hotelEnabled && hotelInactive) ||
+                    (daycareEnabled && daycareInactive);
+                  const rowBlocked = closed || blockedByCapacity;
                   return (
                     <tr
                       key={dayOfWeek}
-                      className={cn("border-b border-[#727B8E]/5 last:border-0", closed && "opacity-40")}
+                      className={cn(
+                        "border-b border-[#727B8E]/5 last:border-0",
+                        rowBlocked && "opacity-40",
+                      )}
                     >
                       <td className="py-2.5 pr-4">
                         <div className="flex items-center gap-2">
-                          <span className={cn("text-sm font-medium", closed ? "text-[#727B8E]" : "text-[#434A57] dark:text-[#f5f9fc]")}>
+                          <span
+                            className={cn(
+                              "text-sm font-medium",
+                              rowBlocked
+                                ? "text-[#727B8E]"
+                                : "text-[#434A57] dark:text-[#f5f9fc]",
+                            )}
+                          >
                             {label}
                           </span>
-                          {closed && (
+                          {rowBlocked && (
                             <span className="rounded-full bg-[#727B8E]/10 px-1.5 py-0.5 text-[10px] text-[#727B8E]">
                               Fechado
                             </span>
@@ -2605,9 +2345,15 @@ function HospedagemContent({ petshop }: { petshop: Petshop | null }) {
                           <input
                             type="number"
                             min="0"
-                            disabled={closed}
-                            value={closed ? 0 : (hotelCapacities[dayOfWeek] ?? 0)}
-                            onChange={(e) => setHotelCapacities((p) => ({ ...p, [dayOfWeek]: Number(e.target.value) }))}
+                            disabled={closed || hotelInactive}
+                            value={closed || hotelInactive ? 0 : (hotelCapacities[dayOfWeek] ?? 0)}
+                            onChange={(e) => {
+                              if (closed || hotelInactive) return;
+                              setHotelCapacities((p) => ({
+                                ...p,
+                                [dayOfWeek]: Number(e.target.value),
+                              }));
+                            }}
                             className="w-20 mx-auto text-center rounded-lg border border-[#727B8E]/20 bg-white dark:bg-[#1A1B1D] dark:border-[#40485A] px-2 py-1.5 text-sm text-[#434A57] dark:text-[#f5f9fc] disabled:opacity-40 focus:border-[#1E62EC] focus:outline-none"
                           />
                         </td>
@@ -2617,9 +2363,15 @@ function HospedagemContent({ petshop }: { petshop: Petshop | null }) {
                           <input
                             type="number"
                             min="0"
-                            disabled={closed}
-                            value={closed ? 0 : (daycareCapacities[dayOfWeek] ?? 0)}
-                            onChange={(e) => setDaycareCapacities((p) => ({ ...p, [dayOfWeek]: Number(e.target.value) }))}
+                            disabled={closed || daycareInactive}
+                            value={closed || daycareInactive ? 0 : (daycareCapacities[dayOfWeek] ?? 0)}
+                            onChange={(e) => {
+                              if (closed || daycareInactive) return;
+                              setDaycareCapacities((p) => ({
+                                ...p,
+                                [dayOfWeek]: Number(e.target.value),
+                              }));
+                            }}
                             className="w-20 mx-auto text-center rounded-lg border border-[#727B8E]/20 bg-white dark:bg-[#1A1B1D] dark:border-[#40485A] px-2 py-1.5 text-sm text-[#434A57] dark:text-[#f5f9fc] disabled:opacity-40 focus:border-[#1E62EC] focus:outline-none"
                           />
                         </td>
@@ -2632,18 +2384,18 @@ function HospedagemContent({ petshop }: { petshop: Petshop | null }) {
           </div>
           <div className="flex justify-end">
             <Button
-              onClick={handleSaveCapacities}
-              disabled={savingCapacity}
+              onClick={handleSaveLodging}
+              disabled={saving}
               size="sm"
               className="flex items-center gap-2"
             >
-              {savingCapacity ? (
+              {saving ? (
                 <>
                   <Loader2 className="h-3 w-3 animate-spin" />
                   Salvando...
                 </>
               ) : (
-                "Salvar vagas"
+                "Salvar hospedagem"
               )}
             </Button>
           </div>
@@ -2881,31 +2633,6 @@ export default function ConfiguracoesPage() {
           "Erro ao salvar",
           "Não foi possível salvar as configurações. Tente novamente.",
         );
-      }
-    },
-    [petshopId, fetchPetshop, toast],
-  );
-
-  const handleSaveHorarios = useCallback(
-    async (data: {
-      business_hours: Record<
-        string,
-        { open: string; close: string } | { closed: boolean }
-      >;
-      default_capacity_per_hour?: number;
-      custom_capacity_hours?: PetshopCustomCapacityHours;
-    }) => {
-      if (!petshopId) return;
-      try {
-        await petshopService.updatePetshop(petshopId, data);
-        await fetchPetshop();
-        toast.success(
-          "Horários salvos!",
-          "As configurações foram atualizadas.",
-        );
-      } catch (error) {
-        console.error("Erro ao salvar horários:", error);
-        toast.error("Erro ao salvar", "Não foi possível salvar os horários.");
       }
     },
     [petshopId, fetchPetshop, toast],
@@ -3173,7 +2900,7 @@ export default function ConfiguracoesPage() {
           />
         );
       case "hospedagem":
-        return <HospedagemContent petshop={petshop} />;
+        return <HospedagemContent />;
       case "empresa":
         return (
           <EmpresaContent
@@ -3183,13 +2910,7 @@ export default function ConfiguracoesPage() {
           />
         );
       case "horarios":
-        return (
-          <HorariosContent
-            petshop={petshop}
-            loading={loadingPetshop}
-            onSave={handleSaveHorarios}
-          />
-        );
+        return <AbaAgenda />;
       case "whatsapp":
         return (
           <WhatsAppContent status={whatsappStatus} loading={loadingWhatsapp} />
@@ -3277,7 +2998,9 @@ export default function ConfiguracoesPage() {
               className="w-full rounded-lg border border-[#727B8E]/20 bg-white dark:bg-[#1A1B1D] dark:border-[#40485A] px-3 py-2 text-sm text-[#434A57] dark:text-[#f5f9fc]"
             >
               <option value="">— Sem especialidade —</option>
-              {specialties.map((sp) => (
+              {specialties
+                .filter((sp) => sp.name !== "Hospedagem")
+                .map((sp) => (
                 <option key={sp.id} value={sp.id}>
                   {sp.name}
                 </option>
@@ -3459,7 +3182,9 @@ export default function ConfiguracoesPage() {
               className="w-full rounded-lg border border-[#727B8E]/20 bg-white dark:bg-[#1A1B1D] dark:border-[#40485A] px-3 py-2 text-sm text-[#434A57] dark:text-[#f5f9fc]"
             >
               <option value="">— Selecione uma especialidade —</option>
-              {specialties.map((sp) => (
+              {specialties
+                .filter((sp) => sp.name !== "Hospedagem")
+                .map((sp) => (
                 <option key={sp.id} value={sp.id}>
                   {sp.name}
                 </option>

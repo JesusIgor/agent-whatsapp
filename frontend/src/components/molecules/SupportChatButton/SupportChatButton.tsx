@@ -1,20 +1,43 @@
-import { useLocation, useNavigate } from "react-router-dom";
+import { useEffect, useState } from "react";
+import { useLocation } from "react-router-dom";
 import { motion } from "framer-motion";
 import { Headphones } from "lucide-react";
 import { cn } from "@/lib/cn";
+import { useAuthContext } from "@/contexts/AuthContext";
+
+const SUPPORT_WHATSAPP_PREFILL_MESSAGE =
+  "Olá! Preciso de ajuda com o produto Auzap.";
+import { petshopService } from "@/services";
 
 interface SupportChatButtonProps {
   className?: string;
 }
 
+function useSupportPhone() {
+  const { user } = useAuthContext();
+  const [phone, setPhone] = useState("");
+
+  useEffect(() => {
+    if (!user?.petshop_id) return;
+    petshopService
+      .getPetshop(user.petshop_id)
+      .then((p) => setPhone(p.company?.pangeiaSupport ?? ""))
+      .catch(() => {});
+  }, [user?.petshop_id]);
+
+  return phone;
+}
+
 export function SupportChatButton({ className }: SupportChatButtonProps) {
   const { pathname } = useLocation();
-  const navigate = useNavigate();
+  const phone = useSupportPhone();
 
   if (pathname === "/chat") return null;
+  if (!phone) return null;
 
   const handleClick = () => {
-    navigate("/chat?mode=support");
+    const text = encodeURIComponent(SUPPORT_WHATSAPP_PREFILL_MESSAGE);
+    window.open(`https://wa.me/${phone}?text=${text}`, "_blank", "noopener,noreferrer");
   };
 
   return (
@@ -33,6 +56,7 @@ export function SupportChatButton({ className }: SupportChatButtonProps) {
       animate={{ opacity: 1, scale: 1 }}
       transition={{ type: "spring", stiffness: 260, damping: 20 }}
       aria-label="Suporte"
+      title="Falar com o suporte Auzap no WhatsApp"
     >
       <Headphones className="h-6 w-6" />
     </motion.button>

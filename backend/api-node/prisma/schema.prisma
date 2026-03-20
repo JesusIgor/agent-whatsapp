@@ -17,9 +17,10 @@ model SaasCompany {
   name      String    @db.VarChar(200)
   slug      String    @unique @db.VarChar(100)
   plan      String?   @default("free") @db.VarChar(50)
-  isActive  Boolean?  @default(true) @map("is_active")
-  createdAt DateTime? @default(now()) @map("created_at") @db.Timestamptz(6)
-  updatedAt DateTime? @updatedAt @map("updated_at") @db.Timestamptz(6)
+  isActive       Boolean?  @default(true) @map("is_active")
+  pangeiaSupport String?   @default("5511963482461") @map("pangeia_support") @db.VarChar(20)
+  createdAt      DateTime? @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt      DateTime? @updatedAt @map("updated_at") @db.Timestamptz(6)
 
   users         SaasUser[]
   petshopProfile PetshopProfile?
@@ -35,6 +36,7 @@ model SaasCompany {
   petshopAppointments   PetshopAppointment[]
   petshopLodgings       PetshopLodging[]
   specialtyCapacityRules SpecialtyCapacityRule[]
+  petshopBusinessHours  PetshopBusinessHours[]
 
   lodgingConfig       PetshopLodgingConfig?
   lodgingCapacities   PetshopLodgingCapacity[]
@@ -78,7 +80,6 @@ model PetshopProfile {
   emergencyContact String?   @map("emergency_contact") @db.VarChar(20)
   assistantName    String?   @map("assistant_name") @db.VarChar(50)
   features         Json?     @default("{}")
-  businessHours    Json?     @default("{}") @map("business_hours")
   isActive         Boolean?  @default(true) @map("is_active")
   createdAt        DateTime? @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt        DateTime? @updatedAt @map("updated_at") @db.Timestamptz(6)
@@ -98,6 +99,9 @@ model Client {
   companyId              Int       @map("company_id")
   sessionId              String?   @map("session_id") @db.VarChar(256)
   phone                  String    @db.VarChar(20)
+  // Apenas visualizacao no frontend. Nao interfere no envio/recepcao de mensagens,
+  // que continuam usando `phone`.
+  manualPhone           String?   @map("manual_phone") @db.VarChar(30)
   name                   String?   @db.VarChar(255)
   companyName            String?   @map("company") @db.VarChar(255)
   email                  String?   @db.VarChar(255)
@@ -215,11 +219,33 @@ model SpecialtyCapacityRule {
 
   specialty PetshopSpecialty @relation(fields: [specialtyId], references: [id], onDelete: Cascade)
   company   SaasCompany      @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  slots     PetshopSlot[]
 
   @@unique([specialtyId, dayOfWeek, slotTime])
   @@index([specialtyId], map: "idx_capacity_rules_specialty")
   @@index([companyId], map: "idx_capacity_rules_company")
   @@map("specialty_capacity_rules")
+}
+
+// ═══════════════════════════════════════════════════════════════
+// HORÁRIO DE FUNCIONAMENTO (fonte de verdade para agenda)
+// ═══════════════════════════════════════════════════════════════
+
+model PetshopBusinessHours {
+  id        String    @id @default(uuid()) @db.Uuid
+  companyId Int       @map("company_id")
+  dayOfWeek Int       @map("day_of_week") @db.SmallInt
+  openTime  DateTime? @map("open_time") @db.Time
+  closeTime DateTime? @map("close_time") @db.Time
+  isClosed  Boolean   @default(false) @map("is_closed")
+  createdAt DateTime? @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime? @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  company SaasCompany @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  @@unique([companyId, dayOfWeek])
+  @@index([companyId], map: "idx_business_hours_company")
+  @@map("petshop_business_hours")
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -259,14 +285,20 @@ model PetshopSlot {
   slotTime     DateTime  @map("slot_time") @db.Time
   maxCapacity  Int       @map("max_capacity")
   usedCapacity Int       @default(0) @map("used_capacity")
+  isBlocked    Boolean   @default(false) @map("is_blocked")
+  ruleId       String?   @map("rule_id") @db.Uuid
+  blockedAt    DateTime? @map("blocked_at") @db.Timestamptz(6)
+  blockReason  String?   @map("block_reason") @db.VarChar(50)
 
-  company      SaasCompany          @relation(fields: [companyId], references: [id], onDelete: Cascade)
-  specialty    PetshopSpecialty     @relation(fields: [specialtyId], references: [id], onDelete: Cascade)
+  company      SaasCompany            @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  specialty    PetshopSpecialty       @relation(fields: [specialtyId], references: [id], onDelete: Cascade)
+  rule         SpecialtyCapacityRule? @relation(fields: [ruleId], references: [id], onDelete: SetNull)
   appointments PetshopAppointment[]
 
   @@unique([specialtyId, slotDate, slotTime])
   @@index([companyId, slotDate], map: "idx_slots_company_date")
   @@index([specialtyId, slotDate], map: "idx_slots_specialty")
+  @@index([companyId, isBlocked, slotDate], map: "idx_slots_blocked")
   @@map("petshop_slots")
 }
 

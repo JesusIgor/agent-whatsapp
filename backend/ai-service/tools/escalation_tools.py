@@ -14,15 +14,19 @@ def build_escalation_tools(company_id: int, client_id: str) -> list:
 
     def escalate_to_human(summary: str, last_message: str) -> dict:
         """
-        Pausa o agente de IA e encaminha o cliente para atendimento humano.
-        Usar quando:
-        - Cliente pede explicitamente para falar com humano
-        - Assunto fora do escopo do petshop
-        - Insatisfação grave ou reclamação complexa
+        OBRIGATÓRIO quando o cliente pede atendimento humano ou equivalente. Pausa a IA e avisa a equipe.
+
+        Acione SEMPRE que a mensagem pedir (ou deixar claro): falar com humano, atendente, pessoa real,
+        alguém da loja, dono, gerente, responsável, supervisor, operador, transferência para pessoa,
+        "me liga", atendimento presencial por staff, etc. — inclusive logo depois de preços, ofertas de
+        serviço ou listagem de horários no histórico.
+
+        Também use para: assunto fora do escopo do petshop; proposta comercial/spam de terceiros;
+        insatisfação grave com pedido explícito de falar com alguém.
 
         Args:
-            summary: Resumo claro do motivo do escalonamento
-            last_message: Última mensagem do cliente
+            summary: Motivo em 1-3 frases (inclua contexto do histórico se ajudar a equipe)
+            last_message: Última mensagem do cliente, literal
         """
         if not summary or not summary.strip():
             return {"success": False, "message": "summary é obrigatório para o escalonamento."}

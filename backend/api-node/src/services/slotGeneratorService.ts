@@ -1,51 +1,28 @@
 import { Prisma } from '@prisma/client'
 import { prisma } from '../lib/prisma'
+import {
+  businessHoursMapFromRows,
+  isSlotWithinBusinessHoursFromMap,
+  isSlotWithinBusinessHoursFromTable,
+  loadBusinessHourRows,
+} from '../lib/businessHoursTable'
 
 const MAX_DAYS_AHEAD = 60
 
 export const DAY_NAMES = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday']
 
-export function isDayOpen(businessHours: Record<string, any> | null, dayOfWeek: number): boolean {
-  if (!businessHours || Object.keys(businessHours).length === 0) return true
-  const dayName = DAY_NAMES[dayOfWeek] as string | undefined
-  if (!dayName) return true
-  const dayConfig = businessHours[dayName]
-  if (!dayConfig || dayConfig.closed === true || !dayConfig.open || !dayConfig.close) return false
-  return true
-}
-
-export function isSlotWithinBusinessHours(
-  businessHours: Record<string, any> | null,
-  dayOfWeek: number,
-  slotTime: Date,
-): boolean {
-  if (!businessHours || Object.keys(businessHours).length === 0) return true
-  const dayName = DAY_NAMES[dayOfWeek] as string | undefined
-  if (!dayName) return true
-
-  const dayConfig = businessHours[dayName]
-  if (!dayConfig || dayConfig.closed === true || !dayConfig.open || !dayConfig.close) return false
-
-  const [openH = 0, openM = 0] = String(dayConfig.open).split(':').map(Number)
-  const [closeH = 0, closeM = 0] = String(dayConfig.close).split(':').map(Number)
-  const openMinutes = openH * 60 + openM
-  const closeMinutes = closeH * 60 + closeM
-  const slotMinutes = slotTime.getUTCHours() * 60 + slotTime.getUTCMinutes()
-  return slotMinutes >= openMinutes && slotMinutes < closeMinutes
-}
+// Re-export para módulos que já importavam daqui
+export {
+  isDayOpenFromTable,
+  isSlotWithinBusinessHoursFromTable,
+  type BusinessHourRow,
+} from '../lib/businessHoursTable'
 
 /**
- * Enforces business hours on existing future slots.
- * Slots for days/times outside business hours: max_capacity=0, used_capacity=0 (effectively disabled).
- * Called after business_hours changes.
+ * Enforces business hours on existing future slots (fonte: petshop_business_hours).
  */
 export async function enforceBusinessHoursOnSlots(companyId: number): Promise<number> {
-  const profile = await prisma.petshopProfile.findUnique({
-    where: { companyId },
-    select: { businessHours: true },
-  })
-  const businessHours = profile?.businessHours as Record<string, any> | null
-  if (!businessHours) return 0
+  const bhRows = await loadBusinessHourRows(companyId)
 
   const today = new Date()
   const futureSlotsRaw = await prisma.$queryRaw<Array<{ id: string; slot_date: Date; slot_time: Date }>>`
@@ -59,7 +36,7 @@ export async function enforceBusinessHoursOnSlots(companyId: number): Promise<nu
   const toDeactivate: string[] = []
   for (const slot of futureSlotsRaw) {
     const dow = slot.slot_date.getUTCDay()
-    if (!isSlotWithinBusinessHours(businessHours, dow, slot.slot_time)) {
+    if (!isSlotWithinBusinessHoursFromTable(bhRows, dow, slot.slot_time)) {
       toDeactivate.push(slot.id)
     }
   }
@@ -76,15 +53,12 @@ export async function enforceBusinessHoursOnSlots(companyId: number): Promise<nu
   return toDeactivate.length
 }
 
+/** Chunks maiores = menos round-trips; transação única abaixo amortiza commit. */
+const SLOT_INSERT_CHUNK = 8000
+
 /**
  * Generates slots for ALL active specialties of a company (or all companies).
- *
- * Rules:
- *  - Never generates beyond today + 60 days
- *  - Uses INSERT ... ON CONFLICT DO UPDATE in a single query per company
- *  - Ignores specialties / companies that are inactive
- *  - Respects business_hours from petshop_profile
- *  - used_capacity always starts at 0 on creation (appointments update it)
+ * Fonte da verdade: petshop_business_hours (sem linha para o DOW = horário liberado).
  */
 export async function generateSlotsForCompany(
   companyId?: number,
@@ -103,25 +77,19 @@ export async function generateSlotsForCompany(
   let totalProcessed = 0
 
   for (const company of companies) {
-    // Parallel: fetch profile, specialties, and clean up old empty slots
-    const [profile, specialties] = await Promise.all([
-      prisma.petshopProfile.findUnique({
-        where: { companyId: company.id },
-        select: { businessHours: true },
-      }),
+    const [bhRows, specialties] = await Promise.all([
+      loadBusinessHourRows(company.id),
       prisma.petshopSpecialty.findMany({
         where: { companyId: company.id, isActive: true },
         select: { id: true },
       }),
     ])
 
-    const businessHours = profile?.businessHours as Record<string, any> | null
-
     if (specialties.length === 0) continue
 
     const specialtyIds = specialties.map((s) => s.id)
+    const bhByDow = businessHoursMapFromRows(bhRows)
 
-    // Parallel: fetch capacity rules + delete old empty slots
     const [rules] = await Promise.all([
       prisma.specialtyCapacityRule.findMany({
         where: { companyId: company.id, specialtyId: { in: specialtyIds }, isActive: true },
@@ -137,7 +105,6 @@ export async function generateSlotsForCompany(
 
     if (rules.length === 0) continue
 
-    // Pre-compute matching dates per dayOfWeek to avoid recomputing in inner loop
     const uniqueDays = [...new Set(rules.map((r) => r.dayOfWeek))]
     const today = new Date()
     const datesByDay = new Map<number, Date[]>()
@@ -153,10 +120,10 @@ export async function generateSlotsForCompany(
       datesByDay.set(dow, dates)
     }
 
-    // Build all slot rows for this company
     const slotRows: Prisma.Sql[] = []
     for (const rule of rules) {
-      if (!isSlotWithinBusinessHours(businessHours, rule.dayOfWeek, rule.slotTime)) continue
+      if (!isSlotWithinBusinessHoursFromMap(bhByDow, rule.dayOfWeek, rule.slotTime)) continue
+
       const dates = datesByDay.get(rule.dayOfWeek) ?? []
       for (const slotDate of dates) {
         slotRows.push(
@@ -167,11 +134,19 @@ export async function generateSlotsForCompany(
 
     if (slotRows.length === 0) continue
 
-    await prisma.$executeRaw`
-      INSERT INTO petshop_slots (id, company_id, specialty_id, slot_date, slot_time, max_capacity, used_capacity)
-      VALUES ${Prisma.join(slotRows)}
-      ON CONFLICT (specialty_id, slot_date, slot_time)
-      DO UPDATE SET max_capacity = EXCLUDED.max_capacity`
+    await prisma.$transaction(
+      async (tx) => {
+        for (let i = 0; i < slotRows.length; i += SLOT_INSERT_CHUNK) {
+          const chunk = slotRows.slice(i, i + SLOT_INSERT_CHUNK)
+          await tx.$executeRaw`
+            INSERT INTO petshop_slots (id, company_id, specialty_id, slot_date, slot_time, max_capacity, used_capacity)
+            VALUES ${Prisma.join(chunk)}
+            ON CONFLICT (specialty_id, slot_date, slot_time)
+            DO UPDATE SET max_capacity = EXCLUDED.max_capacity`
+        }
+      },
+      { timeout: 120_000 },
+    )
 
     totalProcessed += slotRows.length
   }

@@ -10,6 +10,7 @@ export interface Petshop {
   emergencyContact?: string
   assistantName?: string
   features?: Record<string, unknown>
+  /** Derivado no backend a partir de `petshop_business_hours` (não é coluna no banco). */
   businessHours?: Record<string, string | { open: string; close: string; closed?: boolean }>
   isActive?: boolean
   createdAt?: string
@@ -20,6 +21,7 @@ export interface Petshop {
     slug: string
     plan?: string
     isActive?: boolean
+    pangeiaSupport?: string
   }
 }
 
@@ -32,7 +34,6 @@ export interface PetshopUpdate {
   owner_phone?: string
   emergency_contact?: string
   assistant_name?: string
-  business_hours?: Record<string, string | { open?: string; close?: string; closed?: boolean }>
   company_name?: string
   is_active?: boolean
 }
