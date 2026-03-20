@@ -105,11 +105,14 @@ export const appointmentService = {
   async getAvailableDates(params: {
     year: number
     month: number
-  }): Promise<{ dates: string[] }> {
-    const response = await api.get<{ dates: string[] }>(
-      '/appointments/available-dates',
-      { params }
-    )
+  }): Promise<{
+    dates: string[]
+    by_date: Record<string, 'closed' | 'full' | 'available'>
+  }> {
+    const response = await api.get<{
+      dates: string[]
+      by_date: Record<string, 'closed' | 'full' | 'available'>
+    }>('/appointments/available-dates', { params })
     return response.data
   },
 

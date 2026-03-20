@@ -1,4 +1,5 @@
 import { cn } from "@/lib/cn";
+import type { CalendarDayAvailability } from "@/components/molecules/CalendarGrid";
 
 type AppointmentStatus = "concluido" | "confirmado" | "pendente" | "cancelado";
 
@@ -15,7 +16,12 @@ export interface WeekAppointment {
 export interface WeekDay {
   label: string;
   date: number;
+  /** 0-11 */
+  month: number;
+  year: number;
   fullDate: string;
+  /** YYYY-MM-DD (local), alinhado ao calendário e à API */
+  dateKey: string;
   isToday?: boolean;
 }
 
@@ -24,6 +30,7 @@ interface CalendarWeekViewProps {
   appointments: WeekAppointment[];
   onDayClick?: (date: number) => void;
   selectedDay?: number | null;
+  dayAvailability?: Map<string, CalendarDayAvailability>;
 }
 
 const STATUS_DOT: Record<AppointmentStatus, string> = {
@@ -50,26 +57,50 @@ function formatHour(hour: number) {
   return `${String(hour).padStart(2, "0")}:00`;
 }
 
+function dayColumnTone(status: CalendarDayAvailability | undefined) {
+  if (status === "available")
+    return "bg-emerald-50/90 dark:bg-emerald-950/25 border-emerald-200/30 dark:border-emerald-800/20";
+  if (status === "full")
+    return "bg-red-50/90 dark:bg-red-950/25 border-red-200/30 dark:border-red-900/20";
+  if (status === "closed")
+    return "bg-[#E8EAED] dark:bg-[#2a2c30] border-[#727B8E]/15";
+  return "bg-white dark:bg-[#1A1B1D] border-[rgba(114,123,142,0.1)] dark:border-[#40485A]";
+}
+
 export function CalendarWeekView({
   weekDays,
   appointments,
   onDayClick,
   selectedDay,
+  dayAvailability,
 }: CalendarWeekViewProps) {
   return (
     <div className="flex flex-col">
       <div className="grid grid-cols-[80px_repeat(7,1fr)]">
         <div className="border-b border-r border-[rgba(114,123,142,0.1)] bg-[#FAFBFC] dark:border-[#40485A] dark:bg-[#212225]" />
 
-        {weekDays.map((day) => (
+        {weekDays.map((day) => {
+          const st = dayAvailability?.get(day.dateKey);
+          return (
           <button
-            key={day.date}
+            key={day.dateKey}
+            type="button"
+            title={
+              st === "full"
+                ? "Dia lotado"
+                : st === "closed"
+                  ? "Fechado / indisponível"
+                  : st === "available"
+                    ? "Com horários disponíveis"
+                    : undefined
+            }
             onClick={() => onDayClick?.(day.date)}
             className={cn(
-              "flex flex-col items-center gap-0.5 border-b border-r border-[rgba(114,123,142,0.1)] py-2.5 transition-colors dark:border-[#40485A]",
-              selectedDay === day.date
-                ? "bg-[#F0F4FF] hover:bg-[#E8EFFF] dark:bg-[#2172e5]/20 dark:hover:bg-[#2172e5]/25"
-                : "bg-white hover:bg-[#F0F4FF] dark:bg-[#1A1B1D] dark:hover:bg-[#212225]",
+              "flex flex-col items-center gap-0.5 border-b border-r py-2.5 transition-colors dark:border-[#40485A]",
+              dayColumnTone(st),
+              selectedDay === day.date &&
+                "ring-2 ring-inset ring-[#1E62EC]/45 dark:ring-[#2172e5]/50",
+              "cursor-pointer hover:brightness-[0.97]",
             )}
           >
             <span className="text-[10px] font-semibold uppercase tracking-wider text-[#727B8E] dark:text-[#8a94a6]">
@@ -82,13 +113,26 @@ export function CalendarWeekView({
                   ? "bg-[#1B5FE9] text-white dark:bg-[#2172e5]"
                   : selectedDay === day.date
                     ? "text-[#1B5FE9] dark:text-[#6ba3f7]"
-                    : "text-[#434A57] dark:text-[#f5f9fc]",
+                    : st === "full"
+                      ? "text-red-700 dark:text-red-300"
+                      : st === "closed"
+                        ? "text-[#727B8E] dark:text-[#8a94a6]"
+                        : st === "available"
+                          ? "text-emerald-800 dark:text-emerald-200"
+                          : "text-[#434A57] dark:text-[#f5f9fc]",
               )}
             >
               {String(day.date).padStart(2, "0")}
             </span>
+            {st === "full" && (
+              <span className="text-[9px] font-medium text-red-600 dark:text-red-400">Lotado</span>
+            )}
+            {st === "closed" && (
+              <span className="text-[9px] font-medium text-[#727B8E]">Fechado</span>
+            )}
           </button>
-        ))}
+          );
+        })}
       </div>
 
       <div className="flex flex-col">
@@ -110,15 +154,20 @@ export function CalendarWeekView({
                 const cellAppointments = appointments.filter(
                   (a) => a.date === day.fullDate && a.time === hourStr,
                 );
+                const st = dayAvailability?.get(day.dateKey);
 
                 return (
                   <div
-                    key={day.date}
+                    key={day.dateKey}
                     className={cn(
                       "flex flex-col gap-1 border-b border-r border-[rgba(114,123,142,0.1)] p-1 dark:border-[#40485A]",
-                      selectedDay === day.date
-                        ? "bg-[rgba(27,95,233,0.02)] dark:bg-[#2172e5]/10"
-                        : "bg-white dark:bg-[#1A1B1D]",
+                      st === "available" &&
+                        "bg-emerald-50/40 dark:bg-emerald-950/15",
+                      st === "full" && "bg-red-50/35 dark:bg-red-950/12",
+                      st === "closed" && "bg-[#E8EAED]/50 dark:bg-[#2a2c30]/40",
+                      !st && "bg-white dark:bg-[#1A1B1D]",
+                      selectedDay === day.date &&
+                        "ring-1 ring-inset ring-[#1E62EC]/30 dark:ring-[#2172e5]/40",
                     )}
                   >
                     {cellAppointments.map((appt) => (

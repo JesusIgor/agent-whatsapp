@@ -48,6 +48,7 @@ import {
   type LodgingConfig,
 } from "@/services/lodgingService";
 import { useAuthContext } from "@/contexts/AuthContext";
+import { AbaAgenda } from "./AbaAgenda";
 import type { Petshop } from "@/types";
 import type { Specialty } from "@/types/petshop";
 type PetshopCustomCapacityHours = {
@@ -523,7 +524,6 @@ function ServicosContent({
   const [newSpecialtyName, setNewSpecialtyName] = useState("");
   const [newSpecialtyColor, setNewSpecialtyColor] = useState("#1E62EC");
   const [creatingSpecialty, setCreatingSpecialty] = useState(false);
-  const [newSpSlotConfig, setNewSpSlotConfig] = useState<Record<number, DaySlotConfig>>({});
 
   // Specialty edit state
   const [editSpecialtyOpen, setEditSpecialtyOpen] = useState(false);
@@ -532,10 +532,6 @@ function ServicosContent({
   const [spEditName, setSpEditName] = useState("");
   const [spEditColor, setSpEditColor] = useState("#1E62EC");
   const [spEditDescription, setSpEditDescription] = useState("");
-  const [spEditDays, setSpEditDays] =
-    useState<Record<number, DaySlotConfig>>({});
-  const [existingCapRules, setExistingCapRules] = useState<CapacityRule[]>([]);
-  const [loadingSpEdit, setLoadingSpEdit] = useState(false);
   const [savingSpEdit, setSavingSpEdit] = useState(false);
 
   // Filter: Hospedagem is managed in its own tab
@@ -594,11 +590,7 @@ function ServicosContent({
     }
     setCreatingSpecialty(true);
     try {
-      const newId = await onCreateSpecialty(newSpecialtyName.trim(), newSpecialtyColor);
-      const rules = slotConfigToRules(newSpSlotConfig);
-      if (newId && rules.length > 0) {
-        await specialtyService.bulkUpsertCapacityRules(newId, rules);
-      }
+      await onCreateSpecialty(newSpecialtyName.trim(), newSpecialtyColor);
       toast.success(
         "Especialidade criada!",
         `"${newSpecialtyName}" adicionada.`,
@@ -606,7 +598,6 @@ function ServicosContent({
       setNewSpecialtyModal(false);
       setNewSpecialtyName("");
       setNewSpecialtyColor("#1E62EC");
-      setNewSpSlotConfig({});
     } catch (err: any) {
       toast.error(
         "Erro",
@@ -637,24 +628,12 @@ function ServicosContent({
     }
   };
 
-  const handleOpenEditSpecialty = async (sp: Specialty) => {
+  const handleOpenEditSpecialty = (sp: Specialty) => {
     setEditingSpecialtyData(sp);
     setSpEditName(sp.name);
     setSpEditColor(sp.color || "#1E62EC");
     setSpEditDescription(sp.description || "");
-    setSpEditDays(buildInitialSlotConfig(petshop?.businessHours, []));
-    setExistingCapRules([]);
     setEditSpecialtyOpen(true);
-    setLoadingSpEdit(true);
-    try {
-      const rules = await specialtyService.listCapacityRules(sp.id);
-      setExistingCapRules(rules);
-      setSpEditDays(buildInitialSlotConfig(petshop?.businessHours, rules));
-    } catch {
-      // keep defaults
-    } finally {
-      setLoadingSpEdit(false);
-    }
   };
 
   const handleSaveSpecialtyEdit = async () => {
@@ -666,14 +645,9 @@ function ServicosContent({
         color: spEditColor,
         description: spEditDescription || undefined,
       });
-      const rules = slotConfigToRules(spEditDays);
-      await specialtyService.bulkUpsertCapacityRules(
-        editingSpecialtyData.id,
-        rules,
-      );
       toast.success(
         "Especialidade salva!",
-        "Configurações e disponibilidade atualizadas.",
+        "Configurações atualizadas.",
       );
       setEditSpecialtyOpen(false);
       await onRefreshSpecialties();
@@ -764,10 +738,7 @@ function ServicosContent({
 
           <button
             type="button"
-            onClick={() => {
-              setNewSpSlotConfig(buildInitialSlotConfig(petshop?.businessHours, []));
-              setNewSpecialtyModal(true);
-            }}
+            onClick={() => setNewSpecialtyModal(true)}
             className="mt-1 flex items-center gap-1.5 rounded-xl border border-dashed border-[#727B8E]/20 px-3 py-2.5 text-sm text-[#727B8E] hover:border-[#1E62EC]/40 hover:text-[#1E62EC] transition-colors"
           >
             <Plus className="h-3.5 w-3.5" />
@@ -902,7 +873,6 @@ function ServicosContent({
         onClose={() => {
           setNewSpecialtyModal(false);
           setNewSpecialtyName("");
-          setNewSpSlotConfig({});
         }}
         title="Nova especialidade"
         className="max-w-[560px]"
@@ -926,19 +896,6 @@ function ServicosContent({
                 className="h-10 w-20 cursor-pointer rounded border border-[#727B8E]/20"
               />
             </div>
-          </div>
-          <div>
-            <p className="mb-2 text-sm font-medium text-[#434A57] dark:text-[#f5f9fc]">
-              Disponibilidade por hora
-            </p>
-            <p className="mb-3 text-xs text-[#727B8E]">
-              Configure as vagas por horário (sincronizado com o horário comercial). Pode ser ajustado depois.
-            </p>
-            <HourlyCapacityEditor
-              businessHours={petshop?.businessHours}
-              config={newSpSlotConfig}
-              onChange={setNewSpSlotConfig}
-            />
           </div>
           <div className="flex justify-end gap-2">
             <Button
@@ -1066,14 +1023,7 @@ function ServicosContent({
         className="max-w-[560px]"
       >
         <div className="flex max-h-[70vh] flex-col gap-4 overflow-y-auto pr-1">
-          {loadingSpEdit ? (
-            <div className="flex items-center gap-2 py-4 text-sm text-[#727B8E]">
-              <Loader2 className="h-4 w-4 animate-spin" /> Carregando
-              configurações...
-            </div>
-          ) : (
-            <>
-              <Input
+          <Input
                 label="Nome"
                 value={spEditName}
                 onChange={(e) => setSpEditName(e.target.value)}
@@ -1096,26 +1046,6 @@ function ServicosContent({
                 onChange={(e) => setSpEditDescription(e.target.value)}
                 placeholder="Descrição da especialidade"
               />
-              <div>
-                <p className="mb-1 text-sm font-semibold text-[#434A57] dark:text-[#f5f9fc]">
-                  Slots por hora
-                </p>
-                <p className="mb-3 text-xs text-[#727B8E] dark:text-[#8a94a6]">
-                  Clique em cada horário para ativar/desativar. O número ao lado é a capacidade (vagas). Dias fechados no horário comercial aparecem desabilitados.
-                </p>
-                {!petshop?.businessHours ? (
-                  <p className="rounded-lg bg-amber-50 dark:bg-amber-950/20 px-3 py-2 text-xs text-amber-600 dark:text-amber-400">
-                    Configure o horário de funcionamento na aba Horários para habilitar os slots por hora.
-                  </p>
-                ) : (
-                  <HourlyCapacityEditor
-                    businessHours={petshop?.businessHours}
-                    config={spEditDays}
-                    onChange={setSpEditDays}
-                    disabled={savingSpEdit}
-                  />
-                )}
-              </div>
               <div className="flex justify-end gap-2 pt-2">
                 <Button
                   variant="outline"
@@ -1138,8 +1068,6 @@ function ServicosContent({
                   )}
                 </Button>
               </div>
-            </>
-          )}
         </div>
       </Modal>
     </>
@@ -3183,13 +3111,7 @@ export default function ConfiguracoesPage() {
           />
         );
       case "horarios":
-        return (
-          <HorariosContent
-            petshop={petshop}
-            loading={loadingPetshop}
-            onSave={handleSaveHorarios}
-          />
-        );
+        return <AbaAgenda />;
       case "whatsapp":
         return (
           <WhatsAppContent status={whatsappStatus} loading={loadingWhatsapp} />

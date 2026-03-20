@@ -1,2 +1,2 @@
 export { CalendarGrid } from './CalendarGrid'
-export type { CalendarEvent } from './CalendarGrid'
+export type { CalendarEvent, CalendarDayAvailability } from './CalendarGrid'

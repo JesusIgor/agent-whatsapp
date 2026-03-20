@@ -120,8 +120,25 @@ export async function listAppointments(req: Request, res: Response) {
   }
 }
 
+/** Por dia: sem slot / só bloqueado → fechado; há slot livre (não bloqueado + capacidade) → disponível; caso contrário lotado */
+type DayAvailabilityStatus = 'closed' | 'full' | 'available'
+
+function statusForDaySlots(
+  slots: { maxCapacity: number; usedCapacity: number; isBlocked: boolean }[],
+): DayAvailabilityStatus {
+  if (slots.length === 0) return 'closed'
+  const hasBookable = slots.some(
+    (s) => !s.isBlocked && s.maxCapacity - s.usedCapacity > 0,
+  )
+  if (hasBookable) return 'available'
+  const allBlocked = slots.every((s) => s.isBlocked)
+  if (allBlocked) return 'closed'
+  return 'full'
+}
+
 // GET /appointments/available-dates?year=YYYY&month=MM
-// Returns an array of dates (YYYY-MM-DD) in the given month that have at least one available slot.
+// dates: dias com pelo menos um slot livre (não bloqueado)
+// by_date: mapa YYYY-MM-DD → closed | full | available
 export async function getAvailableDates(req: Request, res: Response) {
   try {
     const companyId = req.user!.companyId
@@ -134,23 +151,39 @@ export async function getAvailableDates(req: Request, res: Response) {
 
     const startDate = new Date(Date.UTC(year, month - 1, 1))
     const endDate = new Date(Date.UTC(year, month, 0, 23, 59, 59, 999))
+    const daysInMonth = new Date(Date.UTC(year, month, 0)).getUTCDate()
 
     const slots = await prisma.petshopSlot.findMany({
       where: {
         companyId,
         slotDate: { gte: startDate, lte: endDate },
       },
-      select: { slotDate: true, maxCapacity: true, usedCapacity: true },
+      select: { slotDate: true, maxCapacity: true, usedCapacity: true, isBlocked: true },
     })
 
-    const datesSet = new Set<string>()
+    const byDateKey = new Map<string, { maxCapacity: number; usedCapacity: number; isBlocked: boolean }[]>()
     for (const s of slots) {
-      if (s.maxCapacity - s.usedCapacity > 0) {
-        datesSet.add(s.slotDate.toISOString().slice(0, 10))
-      }
+      const key = s.slotDate.toISOString().slice(0, 10)
+      const list = byDateKey.get(key) ?? []
+      list.push(s)
+      byDateKey.set(key, list)
     }
 
-    res.json({ dates: [...datesSet].sort() })
+    const by_date: Record<string, DayAvailabilityStatus> = {}
+    const datesWithAvailability: string[] = []
+
+    for (let d = 1; d <= daysInMonth; d++) {
+      const dateKey = `${year}-${String(month).padStart(2, '0')}-${String(d).padStart(2, '0')}`
+      const daySlots = byDateKey.get(dateKey) ?? []
+      const status = statusForDaySlots(daySlots)
+      by_date[dateKey] = status
+      if (status === 'available') datesWithAvailability.push(dateKey)
+    }
+
+    res.json({
+      dates: datesWithAvailability,
+      by_date,
+    })
   } catch (error) {
     console.error('Error getting available dates:', error)
     res.status(500).json({ error: 'Failed to get available dates' })
@@ -189,13 +222,14 @@ export async function getAvailableSlots(req: Request, res: Response) {
       where: {
         companyId,
         slotDate,
+        isBlocked: false,
         ...(specialtyId ? { specialtyId } : {}),
       },
       orderBy: { slotTime: 'asc' },
     })
 
     const availableSlots = slots
-      .filter((slot) => slot.maxCapacity - slot.usedCapacity > 0)
+      .filter((slot) => !slot.isBlocked && slot.maxCapacity - slot.usedCapacity > 0)
       .map((slot) => ({
         slot_id: slot.id,
         specialty_id: slot.specialtyId,

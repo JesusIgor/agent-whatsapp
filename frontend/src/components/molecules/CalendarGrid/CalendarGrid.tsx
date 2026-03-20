@@ -1,5 +1,8 @@
 import { cn } from "@/lib/cn";
 
+/** Estado do dia para cores no calendário (vem de /appointments/available-dates → by_date) */
+export type CalendarDayAvailability = "closed" | "full" | "available";
+
 export interface CalendarEvent {
   id: string;
   petName: string;
@@ -15,7 +18,10 @@ interface CalendarGridProps {
   events: CalendarEvent[];
   selectedDate: Date | null;
   onSelectDate: (date: Date) => void;
+  /** @deprecated use dayAvailability */
   availableDates?: Set<string>;
+  /** YYYY-MM-DD → closed (cinza), full (vermelho), available (verde) */
+  dayAvailability?: Map<string, CalendarDayAvailability>;
 }
 
 export function CalendarGrid({
@@ -24,6 +30,7 @@ export function CalendarGrid({
   selectedDate,
   onSelectDate,
   availableDates,
+  dayAvailability,
 }: CalendarGridProps) {
   const weekDays = ["Seg", "Ter", "Qua", "Qui", "Sex", "Sab", "Dom"];
 
@@ -106,46 +113,93 @@ export function CalendarGrid({
             const dayEvents = getEventsForDate(day.date);
             const selected = isSelected(day.date);
             const dateKey = formatDateKey(day.date);
-            const isBlocked = day.isCurrentMonth && availableDates != null && !availableDates.has(dateKey);
+            const status: CalendarDayAvailability | undefined =
+              day.isCurrentMonth && dayAvailability?.has(dateKey)
+                ? dayAvailability.get(dateKey)
+                : day.isCurrentMonth && availableDates != null
+                  ? availableDates.has(dateKey)
+                    ? "available"
+                    : "closed"
+                  : undefined;
+            const canSelect = day.isCurrentMonth;
+            const statusLabel =
+              status === "full"
+                ? "Dia lotado"
+                : status === "closed"
+                  ? "Fechado"
+                  : undefined;
+            const statusTitle =
+              status === "full"
+                ? "Dia lotado — sem vagas livres"
+                : status === "closed"
+                  ? "Sem expediente ou indisponível"
+                  : undefined;
             return (
               <button
                 key={di}
-                onClick={() => !isBlocked && onSelectDate(day.date)}
-                disabled={isBlocked}
-                title={isBlocked ? "Sem horários disponíveis" : undefined}
+                type="button"
+                onClick={() => canSelect && onSelectDate(day.date)}
+                disabled={!day.isCurrentMonth}
+                title={
+                  status === "full"
+                    ? statusTitle
+                    : status === "closed"
+                      ? statusTitle
+                      : undefined
+                }
                 className={cn(
                   "min-h-[100px] p-2 text-left border-r border-[#727B8E]/10 dark:border-[#40485A] last:border-r-0 transition-colors duration-200",
-                  isBlocked
-                    ? "cursor-not-allowed bg-[#F4F6F9]/80 dark:bg-[#212225]/60"
-                    : "hover:bg-[#1E62EC]/5 dark:hover:bg-[#2172e5]/20",
-                  selected && !isBlocked && "bg-[#1E62EC]/10 dark:bg-[#2172e5]/20",
                   !day.isCurrentMonth && "bg-[#F4F6F9]/50 dark:bg-[#212225]/50",
+                  day.isCurrentMonth &&
+                    status === "available" &&
+                    "bg-emerald-50/90 hover:bg-emerald-100/90 dark:bg-emerald-950/25 dark:hover:bg-emerald-900/30 border-emerald-200/40 dark:border-emerald-800/30",
+                  day.isCurrentMonth &&
+                    status === "full" &&
+                    "bg-red-50/90 hover:bg-red-100/80 dark:bg-red-950/25 dark:hover:bg-red-900/30 border-red-200/40 dark:border-red-900/30",
+                  day.isCurrentMonth &&
+                    status === "closed" &&
+                    "bg-[#E8EAED] hover:bg-[#dfe2e6] dark:bg-[#2a2c30] dark:hover:bg-[#32353a] border-[#727B8E]/15",
+                  day.isCurrentMonth &&
+                    selected &&
+                    "ring-2 ring-inset ring-[#1E62EC]/50 dark:ring-[#2172e5]/60",
+                  day.isCurrentMonth && !selected && "hover:brightness-[0.98]",
                 )}
               >
                 <span
                   key={selected ? dateKey : undefined}
                   className={cn(
                     "inline-block text-sm font-medium",
-                    selected && !isBlocked && "animate-calendar-day-select",
-                    isBlocked
-                      ? "text-[#727B8E]/30 dark:text-[#8a94a6]/30"
-                      : !day.isCurrentMonth
-                        ? "text-[#727B8E]/50 dark:text-[#8a94a6]/50"
-                        : isToday(day.date)
-                          ? "text-[#1E62EC] dark:text-[#2172e5] font-bold"
-                          : "text-[#434A57] dark:text-[#f5f9fc]",
+                    selected && "animate-calendar-day-select",
+                    !day.isCurrentMonth
+                      ? "text-[#727B8E]/50 dark:text-[#8a94a6]/50"
+                      : status === "closed"
+                        ? "text-[#727B8E] dark:text-[#8a94a6]"
+                        : status === "full"
+                          ? "text-red-700 dark:text-red-300"
+                          : isToday(day.date)
+                            ? "text-emerald-800 dark:text-emerald-300 font-bold"
+                            : "text-[#166534] dark:text-emerald-200",
                   )}
                 >
                   {day.date.getDate() < 10
                     ? `0${day.date.getDate()}`
                     : day.date.getDate()}
                 </span>
-                {isBlocked && day.isCurrentMonth && (
+                {day.isCurrentMonth && statusLabel && (
                   <div className="mt-1">
-                    <span className="text-[10px] text-[#727B8E]/40 dark:text-[#8a94a6]/40">sem vagas</span>
+                    <span
+                      className={cn(
+                        "text-[10px] font-medium",
+                        status === "full"
+                          ? "text-red-600/90 dark:text-red-400"
+                          : "text-[#727B8E] dark:text-[#8a94a6]",
+                      )}
+                    >
+                      {statusLabel}
+                    </span>
                   </div>
                 )}
-                {!isBlocked && (
+                {day.isCurrentMonth && (
                   <div className="mt-1 space-y-0.5">
                     {dayEvents.slice(0, 3).map((ev) => (
                       <div

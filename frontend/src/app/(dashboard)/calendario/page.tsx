@@ -7,7 +7,6 @@ import {
   type CalendarEvent,
 } from "@/components/molecules/CalendarGrid";
 import { CalendarSidebar } from "@/components/molecules/CalendarSidebar";
-import { CalendarDayView } from "@/components/molecules/CalendarDayView";
 import {
   CalendarWeekView,
   type WeekDay,
@@ -17,7 +16,7 @@ import { Input } from "@/components/atoms/Input";
 import { Select } from "@/components/atoms/Select";
 import { TextArea } from "@/components/atoms/TextArea";
 import { useAvailableScheduleSlots, useToast } from "@/hooks";
-import { MONTHS, WEEK_LABELS, STATUS_OPTIONS } from "@/data/calendar";
+import { WEEK_LABELS, STATUS_OPTIONS } from "@/data/calendar";
 import {
   appointmentService,
   clientService,
@@ -143,7 +142,7 @@ function getWeekDays(
 
   const today = new Date();
 
-  return Array.from({ length: 7 }, (_, i) => {
+    return Array.from({ length: 7 }, (_, i) => {
     const d = new Date(startOfWeek);
     d.setDate(startOfWeek.getDate() + i);
     return {
@@ -152,27 +151,13 @@ function getWeekDays(
       month: d.getMonth(),
       year: d.getFullYear(),
       fullDate: formatDateBR(d),
+      dateKey: formatDateKey(d),
       isToday:
         d.getDate() === today.getDate() &&
         d.getMonth() === today.getMonth() &&
         d.getFullYear() === today.getFullYear(),
     };
   });
-}
-
-function formatDateLabel(year: number, month: number, day: number) {
-  const d = new Date(year, month, day);
-  const weekDayNames = [
-    "Domingo",
-    "Segunda-feira",
-    "Terça-feira",
-    "Quarta-feira",
-    "Quinta-feira",
-    "Sexta-feira",
-    "Sábado",
-  ];
-  const weekDay = weekDayNames[d.getDay()];
-  return `${weekDay}, ${String(day).padStart(2, "0")} de ${MONTHS[month]}`;
 }
 
 function getInitials(name: string): string {
@@ -190,9 +175,7 @@ export default function CalendarioPage() {
 
   const [currentDate, setCurrentDate] = useState(new Date());
   const [selectedDate, setSelectedDate] = useState<Date | null>(new Date());
-  const [activeView, setActiveView] = useState<"month" | "week" | "day">(
-    "month",
-  );
+  const [activeView, setActiveView] = useState<"month" | "week">("month");
   const [events, setEvents] = useState<CalendarEvent[]>(initialEventsFallback);
   const [eventsLoading, setEventsLoading] = useState(true);
 
@@ -275,9 +258,17 @@ export default function CalendarioPage() {
   const [availableDates, setAvailableDates] = useState<Set<string>>(
     new Set(),
   );
+  const [dayAvailabilityByDate, setDayAvailabilityByDate] = useState<
+    Map<string, "closed" | "full" | "available">
+  >(new Map());
   const [availableDatesLoading, setAvailableDatesLoading] = useState(false);
-  // Cache de datas disponíveis por mês — evita re-fetch ao navegar para meses já visitados
-  const availableDatesCache = useRef<Map<string, Set<string>>>(new Map());
+  type MonthAvailabilityCache = {
+    dates: Set<string>;
+    byDate: Record<string, "closed" | "full" | "available">;
+  };
+  const availabilityCache = useRef<Map<string, MonthAvailabilityCache>>(
+    new Map(),
+  );
 
   // Only fetch slots when both date AND service are selected
   const {
@@ -331,34 +322,6 @@ export default function CalendarioPage() {
     });
   }, [availableSlots]);
 
-  useEffect(() => {
-    const yr = currentDate.getFullYear();
-    const mo = currentDate.getMonth() + 1;
-    const cacheKey = `${yr}-${String(mo).padStart(2, "0")}`;
-
-    const cached = availableDatesCache.current.get(cacheKey);
-    if (cached) {
-      setAvailableDates(cached);
-      return;
-    }
-
-    const fetchAvailableDates = async () => {
-      setAvailableDatesLoading(true);
-      try {
-        const result = await appointmentService.getAvailableDates({ year: yr, month: mo });
-        const dateSet = new Set(result.dates);
-        availableDatesCache.current.set(cacheKey, dateSet);
-        setAvailableDates(dateSet);
-      } catch {
-        setAvailableDates(new Set());
-      } finally {
-        setAvailableDatesLoading(false);
-      }
-    };
-    fetchAvailableDates();
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [currentDate.getFullYear(), currentDate.getMonth()]);
-
   const month = currentDate.getMonth();
   const year = currentDate.getFullYear();
   const selectedDay = selectedDate?.getDate() ?? 1;
@@ -368,16 +331,96 @@ export default function CalendarioPage() {
     [year, month, selectedDay],
   );
 
+  useEffect(() => {
+    let cancelled = false;
+
+    const monthSpecs: { y: number; m: number }[] = [];
+    if (activeView === "week") {
+      const seen = new Set<string>();
+      for (const wd of weekDays) {
+        const mk = `${wd.year}-${String(wd.month + 1).padStart(2, "0")}`;
+        if (!seen.has(mk)) {
+          seen.add(mk);
+          monthSpecs.push({ y: wd.year, m: wd.month + 1 });
+        }
+      }
+    } else {
+      monthSpecs.push({
+        y: currentDate.getFullYear(),
+        m: currentDate.getMonth() + 1,
+      });
+    }
+
+    const run = async () => {
+      const toFetch: { y: number; m: number; key: string }[] = [];
+      for (const { y, m } of monthSpecs) {
+        const key = `${y}-${String(m).padStart(2, "0")}`;
+        if (!availabilityCache.current.has(key)) {
+          toFetch.push({ y, m, key });
+        }
+      }
+
+      if (toFetch.length > 0) {
+        setAvailableDatesLoading(true);
+        try {
+          await Promise.all(
+            toFetch.map(async ({ y, m, key }) => {
+              const result = await appointmentService.getAvailableDates({
+                year: y,
+                month: m,
+              });
+              availabilityCache.current.set(key, {
+                dates: new Set(result.dates),
+                byDate: result.by_date ?? {},
+              });
+            }),
+          );
+        } catch {
+          for (const { key } of toFetch) {
+            if (!availabilityCache.current.has(key)) {
+              availabilityCache.current.set(key, {
+                dates: new Set(),
+                byDate: {},
+              });
+            }
+          }
+        } finally {
+          if (!cancelled) setAvailableDatesLoading(false);
+        }
+      }
+
+      const mergedDates = new Set<string>();
+      const mergedByDate: Record<string, "closed" | "full" | "available"> = {};
+      for (const { y, m } of monthSpecs) {
+        const key = `${y}-${String(m).padStart(2, "0")}`;
+        const c = availabilityCache.current.get(key);
+        if (!c) continue;
+        for (const d of c.dates) mergedDates.add(d);
+        Object.assign(mergedByDate, c.byDate);
+      }
+      if (!cancelled) {
+        setAvailableDates(mergedDates);
+        setDayAvailabilityByDate(new Map(Object.entries(mergedByDate)));
+      }
+    };
+
+    run();
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    currentDate.getFullYear(),
+    currentDate.getMonth(),
+    activeView,
+    weekDays,
+  ]);
+
   const handlePrev = useCallback(() => {
     if (activeView === "month") {
       setCurrentDate(new Date(year, month - 1, 1));
       setSelectedDate(new Date(year, month - 1, 1));
-    } else if (activeView === "week") {
-      const newDate = new Date(year, month, selectedDay - 7);
-      setCurrentDate(new Date(newDate.getFullYear(), newDate.getMonth(), 1));
-      setSelectedDate(newDate);
     } else {
-      const newDate = new Date(year, month, selectedDay - 1);
+      const newDate = new Date(year, month, selectedDay - 7);
       setCurrentDate(new Date(newDate.getFullYear(), newDate.getMonth(), 1));
       setSelectedDate(newDate);
     }
@@ -387,12 +430,8 @@ export default function CalendarioPage() {
     if (activeView === "month") {
       setCurrentDate(new Date(year, month + 1, 1));
       setSelectedDate(new Date(year, month + 1, 1));
-    } else if (activeView === "week") {
-      const newDate = new Date(year, month, selectedDay + 7);
-      setCurrentDate(new Date(newDate.getFullYear(), newDate.getMonth(), 1));
-      setSelectedDate(newDate);
     } else {
-      const newDate = new Date(year, month, selectedDay + 1);
+      const newDate = new Date(year, month, selectedDay + 7);
       setCurrentDate(new Date(newDate.getFullYear(), newDate.getMonth(), 1));
       setSelectedDate(newDate);
     }
@@ -408,12 +447,15 @@ export default function CalendarioPage() {
     setSelectedDate(date);
   };
 
-  const handleDayClick = useCallback((day: number) => {
-    setSelectedDate((prev) => {
-      const baseDate = prev ?? new Date();
-      return new Date(baseDate.getFullYear(), baseDate.getMonth(), day);
-    });
-  }, []);
+  const handleDayClick = useCallback(
+    (day: number) => {
+      const wd = weekDays.find((d) => d.date === day);
+      if (wd) {
+        setSelectedDate(new Date(wd.year, wd.month, wd.date));
+      }
+    },
+    [weekDays],
+  );
 
   const handleOpenModal = () => {
     if (selectedDate) {
@@ -652,9 +694,7 @@ export default function CalendarioPage() {
       handleCloseModal();
 
       const [y, m, d] = dateISO.split("-").map(Number);
-      // Invalida cache do mês para forçar re-fetch das datas disponíveis
-      const cacheKey = `${y}-${String(m).padStart(2, "0")}`;
-      availableDatesCache.current.delete(cacheKey);
+      availabilityCache.current.clear();
       setCurrentDate(new Date(y, m - 1, 1));
       setSelectedDate(new Date(y, m - 1, d));
       toast.success(
@@ -683,21 +723,6 @@ export default function CalendarioPage() {
     }),
     [visibleEvents],
   );
-
-  const dayAppointments = useMemo(() => {
-    if (!selectedDate) return [];
-    const dateKey = formatDateKey(selectedDate);
-    return visibleEvents
-      .filter((e) => e.date === dateKey)
-      .map((e) => ({
-        id: e.id,
-        initials: e.petInitials,
-        name: e.petName,
-        service: e.type,
-        time: e.time,
-        status: e.status,
-      }));
-  }, [selectedDate, visibleEvents]);
 
   const weekAppointments = useMemo(() => {
     const weekFullDates = weekDays.map((d) => d.fullDate);
@@ -760,6 +785,11 @@ export default function CalendarioPage() {
                       availableDates={
                         availableDatesLoading ? undefined : availableDates
                       }
+                      dayAvailability={
+                        availableDatesLoading
+                          ? undefined
+                          : dayAvailabilityByDate
+                      }
                     />
                   )}
                   {activeView === "week" && (
@@ -768,12 +798,11 @@ export default function CalendarioPage() {
                       appointments={weekAppointments}
                       onDayClick={handleDayClick}
                       selectedDay={selectedDay}
-                    />
-                  )}
-                  {activeView === "day" && (
-                    <CalendarDayView
-                      appointments={dayAppointments}
-                      selectedDate={formatDateLabel(year, month, selectedDay)}
+                      dayAvailability={
+                        availableDatesLoading
+                          ? undefined
+                          : dayAvailabilityByDate
+                      }
                     />
                   )}
                 </div>
