@@ -35,6 +35,30 @@ def build_router_prompt(context: dict) -> str:
     return f"""Você é um classificador de intenções para um sistema de atendimento de petshop.
 Analise o HISTÓRICO COMPLETO + mensagem atual e retorne um JSON com os campos abaixo.
 
+━━━ PRIORIDADE ABSOLUTA — ATENDIMENTO HUMANO (LER ANTES DE QUALQUER OUTRO AGENTE) ━━━
+Se a MENSAGEM ATUAL do cliente indicar que quer ATENDIMENTO HUMANO, falar com uma PESSOA REAL,
+ATENDENTE, FUNCIONÁRIO, ALGUÉM DA LOJA, DONO(A), GERENTE, RESPONSÁVEL, SUPERVISOR, ou ser
+TRANSFERIDO / PASSADO para outra pessoa (ex.: "me passa pra", "quero falar com quem manda"):
+→ use SEMPRE agent="escalation_agent" — SEM EXCEÇÃO.
+
+Isso vale MESMO que no histórico a assistente tenha:
+• acabado de informar preços ou descrever serviços;
+• listado horários ou pedido confirmação de agendamento;
+• oferecido upsell ou próximos passos;
+• o cliente esteja no meio de um fluxo de marcação.
+
+NÃO use booking_agent, sales_agent, faq_agent, onboarding_agent, lodging_agent nem health_agent
+quando o pedido de contato humano estiver claro na mensagem atual.
+
+Gatilhos (exemplos — aplique o SENTIDO, não só a frase exata):
+"falar com alguém", "atendente", "atendimento humano", "pessoa de verdade", "humano",
+"operador", "me passa pro dono", "quero falar com a gerência", "liga pra mim",
+"atende eu pessoalmente", "quero ser atendido por gente", "não quero falar com robô",
+"isso aí eu resolvo com alguém aí", "me transfere", "escala", "SAC".
+
+escalation_agent também continua valendo para: terceiros VENDENDO/oferecendo serviços AO petshop
+(proposta comercial, spam, marketing B2B) — como já descrito abaixo.
+
 ━━━ REFERÊNCIA DE DATAS ━━━
 Hoje: {today_display} ({today_weekday})
 Estágio atual no CRM: {client_stage}
@@ -73,17 +97,18 @@ faq_agent → dúvidas gerais sobre o petshop (endereço, funcionamento, vacinas
   Gatilhos: "onde fica", "qual o telefone", "como funciona", "aceita", "precisa de", "vocês fazem X?", "tem delivery?", "buscam?", qualquer pergunta sobre serviço/produto não listado acima
 
 escalation_agent → Use quando:
-  1. Cliente pede EXPLICITAMENTE para falar com humano/atendente
-     Gatilhos: "falar com atendente", "quero falar com uma pessoa", "chama alguém", "quero um humano"
+  1. Cliente pede para falar com HUMANO / ATENDENTE / PESSOA REAL / ALGUÉM DA LOJA / DONO / GERENTE
+     (veja PRIORIDADE ABSOLUTA acima — inclui mensagens curtas como "atendente", "falar com alguém", "me passa pra pessoa")
   2. Assunto COMPLETAMENTE fora do universo pet — pessoa tentando VENDER algo, oferecer serviço, propaganda, spam, assunto jurídico, político, etc.
      Gatilhos: "tenho uma proposta", "ofereço serviços de", "parceria comercial", "vendo", "compra de", assuntos não relacionados a pets
   ⚠️ NÃO use escalation_agent para:
     - Serviços do petshop que não existem na lista (ex: buscar pet, delivery, hospedagem) → use faq_agent
     - Perguntas que a assistente não sabe responder sobre o petshop → use faq_agent
     - Cliente confuso ou repetindo pergunta → use faq_agent
-    - Cliente reclamando do atendimento sem pedir humano → use faq_agent
+    - Cliente reclamando do atendimento SEM pedir humano/pessoa/atendente explícito → use faq_agent
 
-REGRA: se a intenção misturar preço + agendamento → use booking_agent (mais completo)
+REGRA: se a intenção misturar preço + agendamento → use booking_agent (mais completo),
+  EXCETO se a mensagem atual pedir atendimento humano — aí escalation_agent tem prioridade absoluta.
 
 ━━━ REGRA DE PÓS-CONCLUSÃO ━━━
 Se o histórico mostrar que a assistente JÁ concluiu com sucesso um cadastro de pet ou um agendamento, e a mensagem atual for só agradecimento/encerramento
@@ -164,6 +189,12 @@ Analise TODO o histórico para extrair o contexto acumulado:
 {{"agent":"lodging_agent","stage":"SCHEDULING","specialty_type":"lodging","lodging_type":"daycare","active_pet":null,"checkin_mentioned":null,"checkout_mentioned":null,"awaiting_confirmation":false}}
 
 "quero falar com um atendente" →
+{{"agent":"escalation_agent","stage":"WELCOME","active_pet":null,"service":null,"date_mentioned":null,"awaiting_confirmation":false}}
+
+[Histórico: assistente citou preço do banho ou ofereceu serviço. Mensagem atual: "prefiro falar com alguém aí" / "quero atendente" / "me passa pro dono"] →
+{{"agent":"escalation_agent","stage":"WELCOME","active_pet":null,"service":null,"date_mentioned":null,"awaiting_confirmation":false}}
+
+[Histórico: assistente listou horários para agendar. Mensagem atual: "antes disso quero falar com uma pessoa"] →
 {{"agent":"escalation_agent","stage":"WELCOME","active_pet":null,"service":null,"date_mentioned":null,"awaiting_confirmation":false}}
 
 "tenho uma proposta comercial pra vocês" / "ofereço serviços de marketing" / "vendo ração no atacado" →

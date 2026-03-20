@@ -1150,6 +1150,17 @@ function EmpresaContent({
             value={emergencyContact}
             onChange={(e) => setEmergencyContact(maskPhone(e.target.value))}
           />
+          <div className="sm:col-span-2">
+            <Input
+              label="Suporte Auzap"
+              value={petshop?.company?.pangeiaSupport ?? ""}
+              disabled
+              className="bg-gray-100 dark:bg-[#2a2b2d]"
+            />
+            <p className="mt-1 text-xs text-[#727B8E] dark:text-[#8a94a6]">
+              Número de suporte configurado pela Auzap. Não editável.
+            </p>
+          </div>
         </div>
       </section>
       <section>

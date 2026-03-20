@@ -21,6 +21,7 @@ export interface Petshop {
     slug: string
     plan?: string
     isActive?: boolean
+    pangeiaSupport?: string
   }
 }
 

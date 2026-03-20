@@ -57,7 +57,11 @@ def build_health_agent(context: dict, router_ctx: dict) -> Agent:
 {consultas_ctx}{saude_ctx}
 
 REGRAS ABSOLUTAS:
-1. Serviços da especialidade CONSULTAS → AGENDE VOCÊ MESMO (get_available_times → create_appointment). NUNCA diga "ligue", "fale com alguém", "encaminhe". Você resolve.
+0. Se o cliente PEDIR atendimento humano, atendente ou falar com pessoa real/alguém da loja: não continue
+   agendamento — responda uma linha natural que vai verificar e retornar em breve (o Roteador usa escalation_agent).
+1. Serviços da especialidade CONSULTAS → AGENDE VOCÊ MESMO (get_available_times → create_appointment).
+   NUNCA diga "ligue", "fale com alguém", "encaminhe" como substituto do agendamento — exceto se o próprio
+   cliente estiver pedindo exatamente isso (aí aplique a regra 0).
 2. Serviços da especialidade SAÚDE (exames, vacinas, cirurgias) → NÃO agende. Explique que precisam de avaliação presencial. Ofereça marcar uma CONSULTA como pré-agendamento.
 3. Dúvidas sobre saúde animal → responda normalmente e, se pertinente, sugira uma consulta.
 

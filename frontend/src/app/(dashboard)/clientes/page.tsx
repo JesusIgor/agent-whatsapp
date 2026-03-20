@@ -1122,9 +1122,29 @@ export default function ClientesPage() {
     handleCepChange,
     cepLoading,
     cepError,
-    isFieldDisabled,
     reset: resetAddress,
   } = useAddressByCep();
+
+  const [customerStep1Errors, setCustomerStep1Errors] = useState<{
+    name?: string;
+    phone?: string;
+  }>({});
+
+  const goToCustomerAddressStep = useCallback(() => {
+    const nameTrim = customerForm.name.trim();
+    const digits = customerForm.phone.replace(/\D/g, "");
+    const localDigits =
+      digits.startsWith("55") && digits.length > 11 ? digits.slice(2) : digits;
+    const editing = Boolean(editingCustomer);
+    const next: { name?: string; phone?: string } = {};
+    if (!nameTrim) next.name = "Informe o nome do tutor.";
+    if (!editing && localDigits.length < 10) {
+      next.phone = "Informe DDD + número (mín. 10 dígitos).";
+    }
+    setCustomerStep1Errors(next);
+    if (Object.keys(next).length > 0) return;
+    setCustomerStep(2);
+  }, [customerForm.name, customerForm.phone, editingCustomer]);
 
   const [loadingPets, setLoadingPets] = useState(false);
   const [loadingAppointments, setLoadingAppointments] = useState(false);
@@ -1162,6 +1182,7 @@ export default function ClientesPage() {
   useEffect(() => {
     if (customerModalOpen) {
       setSaveError(null);
+      setCustomerStep1Errors({});
       setCustomerStep(1);
       if (editingCustomer) {
         const { address: addrLine, notes: notesOnly } = parseNotesForEdit(
@@ -1688,7 +1709,7 @@ export default function ClientesPage() {
         title={editingCustomer ? "Editar cliente" : "Novo cliente"}
         onSubmit={
           customerStep === 1
-            ? () => setCustomerStep(2)
+            ? () => goToCustomerAddressStep()
             : () => void handleSaveCustomer()
         }
         submitText={
@@ -1724,29 +1745,52 @@ export default function ClientesPage() {
 
           {customerStep === 1 && (
             <>
-              <Input
-                label="Nome"
-                placeholder="Nome do tutor"
-                value={customerForm.name}
-                onChange={(e) =>
-                  setCustomerForm((f) => ({ ...f, name: e.target.value }))
-                }
-                required
-              />
-              <Input
-                label="Telefone"
-                placeholder="(11) 99999-9999"
-                value={customerForm.phone}
-                onChange={(e) =>
-                  setCustomerForm((f) => ({
-                    ...f,
-                    // Evita letras (ex.: colar texto) no valor do telefone.
-                    // Mantemos '@' caso venha um identificador especial.
-                    phone: maskPhone(e.target.value.replace(/[a-z]/gi, "")),
-                  }))
-                }
-                required={!editingCustomer}
-              />
+              <div>
+                <Input
+                  label="Nome"
+                  placeholder="Nome do tutor"
+                  value={customerForm.name}
+                  onChange={(e) => {
+                    setCustomerForm((f) => ({ ...f, name: e.target.value }));
+                    if (e.target.value.trim())
+                      setCustomerStep1Errors((prev) => ({
+                        ...prev,
+                        name: undefined,
+                      }));
+                  }}
+                  required
+                />
+                {customerStep1Errors.name && (
+                  <p className="mt-1 text-xs text-red-500">
+                    {customerStep1Errors.name}
+                  </p>
+                )}
+              </div>
+              <div>
+                <Input
+                  label="Telefone"
+                  placeholder="(11) 99999-9999"
+                  value={customerForm.phone}
+                  onChange={(e) => {
+                    setCustomerForm((f) => ({
+                      ...f,
+                      // Evita letras (ex.: colar texto) no valor do telefone.
+                      // Mantemos '@' caso venha um identificador especial.
+                      phone: maskPhone(e.target.value.replace(/[a-z]/gi, "")),
+                    }));
+                    setCustomerStep1Errors((prev) => ({
+                      ...prev,
+                      phone: undefined,
+                    }));
+                  }}
+                  required={!editingCustomer}
+                />
+                {customerStep1Errors.phone && (
+                  <p className="mt-1 text-xs text-red-500">
+                    {customerStep1Errors.phone}
+                  </p>
+                )}
+              </div>
               <Input
                 label="E-mail"
                 type="email"
@@ -1782,7 +1826,6 @@ export default function ClientesPage() {
                 placeholder="Logradouro"
                 value={address.rua}
                 onChange={(e) => setField("rua", e.target.value)}
-                disabled={isFieldDisabled("rua")}
               />
               <div className="grid grid-cols-2 gap-4">
                 <Input
@@ -1796,7 +1839,6 @@ export default function ClientesPage() {
                   placeholder="Apto, sala..."
                   value={address.complemento}
                   onChange={(e) => setField("complemento", e.target.value)}
-                  disabled={isFieldDisabled("complemento")}
                 />
               </div>
               <div className="grid grid-cols-2 gap-4">
@@ -1805,14 +1847,12 @@ export default function ClientesPage() {
                   placeholder="Bairro"
                   value={address.bairro}
                   onChange={(e) => setField("bairro", e.target.value)}
-                  disabled={isFieldDisabled("bairro")}
                 />
                 <Input
                   label="Cidade"
                   placeholder="Cidade"
                   value={address.cidade}
                   onChange={(e) => setField("cidade", e.target.value)}
-                  disabled={isFieldDisabled("cidade")}
                 />
               </div>
               <Input
@@ -1822,7 +1862,6 @@ export default function ClientesPage() {
                 onChange={(e) =>
                   setField("uf", e.target.value.toUpperCase().slice(0, 2))
                 }
-                disabled={isFieldDisabled("uf")}
               />
               <Select
                 label="Status"
