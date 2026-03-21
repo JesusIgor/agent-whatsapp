@@ -363,6 +363,7 @@ model PetshopAppointment {
   confirmed     Boolean   @default(false)
   notes         String?
   priceCharged  Decimal?  @map("price_charged") @db.Decimal(10, 2)
+  source        String?   @db.VarChar(50)
   cancelledAt   DateTime? @map("cancelled_at") @db.Timestamptz(6)
   cancelReason  String?   @map("cancel_reason")
   createdAt     DateTime? @default(now()) @map("created_at") @db.Timestamptz(6)
