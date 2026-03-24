@@ -2102,7 +2102,9 @@ function HospedagemContent() {
   }
 
   return (
-    <div className="flex flex-col gap-6">
+    <div className="flex h-full min-h-0 flex-col">
+      <div className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden pr-1">
+        <div className="flex flex-col gap-6 pb-2">
       {/* ─── Hotel ─── */}
       <div className="rounded-xl border border-[#727B8E]/10 bg-white dark:border-[#40485A] dark:bg-[#1A1B1D] p-5 flex flex-col gap-4">
         <div className="flex items-center justify-between">
@@ -2285,7 +2287,7 @@ function HospedagemContent() {
             )}
           </div>
 
-          <div className="overflow-x-auto">
+          <div className="overflow-x-auto pb-1">
             <table className="w-full text-sm">
               <thead>
                 <tr className="border-b border-[#727B8E]/10">
@@ -2382,25 +2384,31 @@ function HospedagemContent() {
               </tbody>
             </table>
           </div>
-          <div className="flex justify-end">
-            <Button
-              onClick={handleSaveLodging}
-              disabled={saving}
-              size="sm"
-              className="flex items-center gap-2"
-            >
-              {saving ? (
-                <>
-                  <Loader2 className="h-3 w-3 animate-spin" />
-                  Salvando...
-                </>
-              ) : (
-                "Salvar hospedagem"
-              )}
-            </Button>
-          </div>
         </div>
       )}
+        </div>
+      </div>
+
+      {/* Rodapé fixo no painel da aba: área de cima rola; o botão permanece visível */}
+      <div className="sticky bottom-0 z-10 shrink-0 border-t border-[#727B8E]/10 bg-white/95 px-1 py-3 backdrop-blur-sm dark:border-[#40485A] dark:bg-[#1A1B1D]/95 sm:px-0">
+        <div className="flex justify-end">
+          <Button
+            onClick={handleSaveLodging}
+            disabled={saving}
+            size="sm"
+            className="flex items-center gap-2 shadow-sm"
+          >
+            {saving ? (
+              <>
+                <Loader2 className="h-3 w-3 animate-spin" />
+                Salvando...
+              </>
+            ) : (
+              "Salvar hospedagem"
+            )}
+          </Button>
+        </div>
+      </div>
     </div>
   );
 }

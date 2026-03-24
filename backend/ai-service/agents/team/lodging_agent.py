@@ -47,6 +47,10 @@ FLUXO DE HOSPEDAGEM:
 REGRAS:
 - Se o cliente pedir atendimento humano, atendente ou falar com alguém da loja: pare o fluxo de hospedagem
   e responda uma linha natural que vai verificar e retornar em breve (o Roteador deve usar escalation_agent).
+- CRECHE (daycare): no cadastro, o período usa data de fim exclusivo — para passar um dia inteiro na creche, a data de
+  "saída" informada às tools é o dia seguinte ao dia em que o pet fica (ex.: creche na segunda → check-out na terça).
+  Explique isso em linguagem natural se o cliente estranhar duas datas: o que importa é o dia civil de uso e os horários
+  de entrada/saída do petshop, não a segunda data em si.
 - NUNCA peça o valor da diária ao cliente — ele vem da configuração do petshop via get_kennel_availability
 - NUNCA crie hospedagem sem confirmação explícita do cliente
 - Se o cliente perguntar o valor, use o daily_rate retornado por get_kennel_availability

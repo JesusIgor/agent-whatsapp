@@ -125,6 +125,14 @@ def build_lodging_tools(company_id: int, client_id, lodging_type: str = "hotel")
         rate_info = f"R${daily_rate_val:.2f}/dia" if daily_rate_val else "valor a combinar"
         total_info = f"Total: R${total:.2f} ({days} dia{'s' if days > 1 else ''})" if total else ""
 
+        if lodging_type == "daycare" and days == 1:
+            msg = (
+                f"Há vaga(s) na creche para o dia {checkin.strftime('%d/%m/%Y')} (1 diária). "
+                f"{rate_info}. {total_info}".strip()
+            )
+        else:
+            msg = f"Há vaga(s) disponíveis. {rate_info}. {total_info}".strip()
+
         return {
             "success": True,
             "available": True,
@@ -134,7 +142,7 @@ def build_lodging_tools(company_id: int, client_id, lodging_type: str = "hotel")
             "total_amount": total,
             "checkin_date": checkin_date,
             "checkout_date": checkout_date,
-            "message": f"Há vaga(s) disponíveis. {rate_info}. {total_info}".strip(),
+            "message": msg,
         }
 
     def create_lodging(
@@ -229,12 +237,22 @@ def build_lodging_tools(company_id: int, client_id, lodging_type: str = "hotel")
                 (client_id, company_id)
             )
 
+        if lodging_type == "daycare" and days == 1:
+            confirm_msg = (
+                f"Creche confirmada para o dia {checkin.strftime('%d/%m/%Y')} (1 diária). "
+                f"Retirada no horário de saída configurado no petshop."
+            )
+        else:
+            confirm_msg = (
+                f"Hospedagem confirmada! Check-in {checkin_date}, check-out {checkout_date} ({days} dias)."
+            )
+
         return {
             "success": True,
             "lodging_id": str(lodging_id),
             "days": days,
             "total_amount": total_amount,
-            "message": f"Hospedagem confirmada! Check-in {checkin_date}, check-out {checkout_date} ({days} dias)."
+            "message": confirm_msg,
         }
 
     def cancel_lodging(lodging_id: str, reason: str = None) -> dict:
