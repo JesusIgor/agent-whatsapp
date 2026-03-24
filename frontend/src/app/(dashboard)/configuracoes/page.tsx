@@ -18,6 +18,7 @@ import {
   Mail,
   User,
   Sparkles,
+  RotateCcw,
 } from "lucide-react";
 import { DashboardLayout } from "@/components/templates/DashboardLayout";
 import {
@@ -515,6 +516,7 @@ function ServicosContent({
   onRefresh,
   onCreateSpecialty,
   onDeleteSpecialty,
+  onActivateSpecialty,
   onNewService,
   onRefreshSpecialties,
 }: {
@@ -528,6 +530,7 @@ function ServicosContent({
   onRefresh: () => void;
   onCreateSpecialty: (name: string, color?: string) => Promise<string>;
   onDeleteSpecialty: (id: string) => Promise<void>;
+  onActivateSpecialty: (id: string) => Promise<void>;
   onNewService: (specialtyId: string) => void;
   onRefreshSpecialties: () => Promise<void>;
 }) {
@@ -542,6 +545,9 @@ function ServicosContent({
   const [deactivateSpecialtyModal, setDeactivateSpecialtyModal] =
     useState<Specialty | null>(null);
   const [deactivatingSpecialty, setDeactivatingSpecialty] = useState(false);
+  const [reactivatingSpecialtyId, setReactivatingSpecialtyId] = useState<
+    string | null
+  >(null);
 
   // Specialty creation state
   const [newSpecialtyModal, setNewSpecialtyModal] = useState(false);
@@ -652,6 +658,21 @@ function ServicosContent({
     }
   };
 
+  const handleActivateSpecialty = async (sp: Specialty) => {
+    setReactivatingSpecialtyId(sp.id);
+    try {
+      await onActivateSpecialty(sp.id);
+      toast.success(
+        "Especialidade reativada!",
+        `"${sp.name}" está ativa novamente.`,
+      );
+    } catch {
+      toast.error("Erro", "Não foi possível reativar a especialidade.");
+    } finally {
+      setReactivatingSpecialtyId(null);
+    }
+  };
+
   const handleOpenEditSpecialty = (sp: Specialty) => {
     setEditingSpecialtyData(sp);
     setSpEditName(sp.name);
@@ -747,14 +768,33 @@ function ServicosContent({
                   >
                     <Edit2 className="h-3.5 w-3.5" style={{ color: isSelected ? spColor : "#727B8E" }} />
                   </button>
-                  <button
-                    type="button"
-                    title="Desativar especialidade"
-                    onClick={(e) => { e.stopPropagation(); setDeactivateSpecialtyModal(sp); }}
-                    className="shrink-0 flex h-6 w-6 items-center justify-center rounded-lg opacity-0 group-hover:opacity-40 hover:!opacity-100 hover:bg-red-50 dark:hover:bg-red-950/20 transition-all text-red-400"
-                  >
-                    <X className="h-3.5 w-3.5" />
-                  </button>
+                  {sp.isActive ? (
+                    <button
+                      type="button"
+                      title="Desativar especialidade"
+                      onClick={(e) => { e.stopPropagation(); setDeactivateSpecialtyModal(sp); }}
+                      className="shrink-0 flex h-6 w-6 items-center justify-center rounded-lg opacity-0 group-hover:opacity-40 hover:!opacity-100 hover:bg-red-50 dark:hover:bg-red-950/20 transition-all text-red-400"
+                    >
+                      <X className="h-3.5 w-3.5" />
+                    </button>
+                  ) : (
+                    <button
+                      type="button"
+                      title="Reativar especialidade"
+                      disabled={reactivatingSpecialtyId === sp.id}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        void handleActivateSpecialty(sp);
+                      }}
+                      className="shrink-0 flex h-6 w-6 items-center justify-center rounded-lg text-[#3DCA21] opacity-90 hover:opacity-100 hover:bg-[#3DCA21]/10 transition-all disabled:opacity-40"
+                    >
+                      {reactivatingSpecialtyId === sp.id ? (
+                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                      ) : (
+                        <RotateCcw className="h-3.5 w-3.5" />
+                      )}
+                    </button>
+                  )}
                 </div>
               );
             })
@@ -2970,6 +3010,9 @@ export default function ConfiguracoesPage() {
             onRefresh={fetchServices}
             onCreateSpecialty={handleCreateSpecialty}
             onDeleteSpecialty={handleDeleteSpecialty}
+            onActivateSpecialty={async (id) => {
+              await handleToggleSpecialty(id, true);
+            }}
             onNewService={handleOpenNewServiceModal}
             onRefreshSpecialties={fetchSpecialties}
           />
