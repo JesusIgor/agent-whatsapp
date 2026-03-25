@@ -709,10 +709,10 @@ function ServicosContent({
   return (
     <>
       {/* ─── Master-Detail layout ─── */}
-      <div className="flex min-h-0 gap-5">
+      <div className="lg:flex flex-col min-h-0 gap-5">
 
         {/* ─── Left: Specialty sidebar ─── */}
-        <div className="flex w-52 shrink-0 flex-col gap-1">
+        <div className="flex w-full lg:max-w-52 shrink-0 flex-col gap-1">
           <div className="mb-2 flex items-center justify-between">
             <p className="text-[11px] font-semibold uppercase tracking-wider text-[#727B8E] dark:text-[#8a94a6]">
               Especialidades
