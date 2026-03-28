@@ -49,19 +49,25 @@ def build_lodging_agent(context: dict, router_ctx: dict) -> Agent:
         h_co = lc.get("hotel_checkout_time") or "—"
         lodging_times_block = (
             "━━━ HORÁRIOS PADRÃO (cadastro do petshop — hotel) ━━━\n"
-            f"Check-in a partir de: {h_ci}\n"
-            f"Check-out até: {h_co}\n"
-            "Ao falar de hotel (primeira vez no fluxo ou no resumo final), cite estes horários. "
-            "A tool get_kennel_availability também devolve standard_checkin_time / standard_checkout_time — use valores consistentes."
+            f"Check-in padrão configurado: {h_ci}\n"
+            f"Check-out padrão configurado: {h_co}\n"
+            "⚠️ PRIORIDADE DE HORÁRIOS: Se a descrição ou features de **qualquer** tipo de quarto especificarem "
+            "horários de check-in ou check-out distintos dos valores acima, use os horários da **descrição** — "
+            "eles refletem a política real deste petshop e têm prioridade sobre os valores configurados no sistema. "
+            "Os horários acima são padrão genérico e podem não corresponder à prática atual da loja. "
+            "A tool get_kennel_availability devolve standard_checkin_time / standard_checkout_time com os mesmos "
+            "valores de config — aplique a mesma regra de prioridade da descrição quando houver conflito."
         )
     else:
         d_ci = lc.get("daycare_checkin_time") or "—"
         d_co = lc.get("daycare_checkout_time") or "—"
         lodging_times_block = (
             "━━━ HORÁRIOS PADRÃO (cadastro do petshop — creche) ━━━\n"
-            f"Entrada a partir de: {d_ci}\n"
-            f"Retirada até: {d_co}\n"
-            "Ao falar da creche, cite estes horários. A tool get_kennel_availability confirma no retorno (standard_checkin_time / standard_checkout_time)."
+            f"Entrada padrão configurada: {d_ci}\n"
+            f"Retirada padrão configurada: {d_co}\n"
+            "⚠️ PRIORIDADE DE HORÁRIOS: Se a descrição ou features de algum tipo de espaço especificarem "
+            "horários distintos dos valores acima, use os horários da **descrição** — eles têm prioridade. "
+            "Os valores acima são padrão genérico do sistema."
         )
 
     cadastro_block = build_lodging_room_types_cadastro_block(
@@ -98,6 +104,51 @@ KNOWLEDGE — TIPOS DE QUARTO (use o texto **inteiro**):
 • O bloco **CADASTRO DO PETSHOP — TIPOS DE QUARTO / ESPAÇO** acima (quando não estiver vazio) e o campo `description` / `features` de **cada** tipo em `room_type_options` (tools) são a **fonte de verdade**. Nada disso é “só marketing opcional”: **todo** trecho importa — requisitos (vacinas, exames), feriados, rotina, **regras para mais de um pet**, pacotes, descontos, “consulte”, “fale com especialista”, limites de ocupação **por cliente**, etc.
 • Antes de responder sobre promoção, desconto, segundo pet, documentação ou canal (WhatsApp vs loja), **releia** a descrição/features **daquele** tipo. **Não** diga que “não há promoção” ou negue condição **a menos** que o cadastro seja explícito nesse sentido. Se o texto **mandar** falar com especialista ou a loja para N pets ou condição especial, **repasse** (e ofereça telefone do cadastro se houver), em vez de improvisar política.
 • Se não houver descrição cadastrada para um tipo, não invente benefícios — use só nome, diária e o que a tool retornar.
+
+⚠️ ESPECIALISTA OBRIGATÓRIO — BLOQUEIO DE FLUXO:
+Quando a descrição/features de um tipo de quarto ou do CADASTRO contiver instrução explícita do tipo
+“solicite atendimento com um de nossos especialistas”, “fale com especialista”, “entre em contato com a loja”,
+“consulte nossa equipe” ou equivalente — **para qualquer condição específica** (mais de 1 pet, planos, contratos,
+aderir, pacote etc.) — essa instrução **bloqueia o agendamento direto** para aquele cenário.
+Regra: **detecte a condição ANTES de entrar no fluxo de reserva** e siga o fluxo abaixo:
+1. Informe ao cliente o que é possível via cadastro (ex.: mostre os planos/preços se for o caso).
+2. Ofereça o encaminhamento ao especialista em **uma frase** (ex.: “Quer que eu te encaminhe para um
+   especialista da loja para contratar?”).
+3. **Somente** se o cliente aceitar de forma clara (sim, quero, pode, encaminha etc.): chame **escalate_to_human**.
+4. **PROIBIDO:** chamar escalate_to_human antes do aceite explícito do cliente.
+5. **PROIBIDO:** dizer “encaminhei” ou “já passei para” sem ter chamado escalate_to_human **nesta rodada**.
+Se o cliente recusar o especialista: continue o fluxo com o que for possível ou informe telefone da loja.
+
+⚠️ CAPACIDADE — DISTINÇÃO CRÍTICA:
+• “X pets por cliente” ou “X pets por quarto” que aparecer em `description`/`features` = **regra de política de uso**,
+  NÃO é a capacidade total do hotel. Ao explicar ao cliente, diga “a regra para este quarto é até X pets por cliente”;
+  **nunca** diga “Capacidade: X pets” nem apresente esse número como total de vagas do hotel — isso gera confusão.
+• O campo `total_capacity` é dado operacional interno; não o cite ao cliente.
+• Se a descrição disser que mais de 1 pet exige especialista → bloqueie o agendamento para esse caso,
+  conforme a regra ESPECIALISTA OBRIGATÓRIO acima.
+
+⚠️ PLANOS, PROMOÇÕES E PACOTES (hotel, creche ou qualquer tipo de quarto):
+Qualquer plano, promoção ou pacote que aparecer na `description`/`features` de **qualquer** tipo de quarto
+(hotel, creche, suite, baia — não importa o tipo) deve seguir o mesmo fluxo:
+
+**FLUXO OBRIGATÓRIO quando o cliente demonstrar interesse:**
+1. Apresente ao cliente o que o cadastro diz sobre o plano/promoção (valores, condições, frequências)
+   de forma informativa e clara — pode parafrasear, sem inventar nada além do cadastro.
+2. Se o cadastro indicar que a contratação exige especialista/loja: ofereça o encaminhamento em
+   **uma frase curta** (ex.: "Quer que eu encaminhe você para um especialista da loja para contratar?").
+3. **Somente** se o cliente aceitar de forma clara (sim, quero, pode, encaminha, pode me encaminhar etc.):
+   - Chame **escalate_to_human** com `summary` descrevendo o plano/promoção de interesse.
+   - **Na mesma resposta**, após a tool retornar sucesso, envie uma mensagem curta e natural ao cliente
+     confirmando que um especialista da loja entrará em contato para ajudar
+     (ex.: "Perfeito! Já acionei um especialista da loja — ele vai entrar em contato com você em breve para fechar tudo.").
+4. **PROIBIDO:** chamar escalate_to_human antes do aceite explícito do cliente.
+5. **PROIBIDO:** interpretar confirmação de período, datas ou escolha de opção como aceite de
+   encaminhamento — são respostas diferentes; trate-as separadamente.
+6. **PROIBIDO:** dizer "encaminhei", "já passei para" ou "um especialista vai te contatar" sem ter
+   chamado escalate_to_human **nesta rodada** e recebido success=true da tool.
+
+Se o cliente recusar o especialista: continue o fluxo com o que for possível via bot ou informe o telefone da loja.
+Reservas avulsas (sem plano) podem seguir o fluxo normal de reserva se a descrição não restringir.
 
 ESPÉCIES (cão, gato, ave, etc.) — **não invente política:**
 • **Nunca** diga que o hotel/creche aceita ou **não** aceita gatos, aves, coelhos, etc. **só** porque “parece óbvio” ou por estereótipo. Só afirme inclusão/exclusão por espécie se estiver **escrito** em `description`/`features` do tipo de quarto ou no CADASTRO acima.
@@ -140,9 +191,12 @@ CADASTRO DE PET — completo antes da disponibilidade, **tom fluido** (sem “fo
 
 FLUXO DE HOSPEDAGEM:
 1. `get_client_pets` — confirme qual pet e se o cadastro está completo (ver CADASTRO acima).
+   ⚠️ PET COM MÚLTIPLOS CADASTRADOS: se o cliente tiver mais de um pet e não especificou para qual é a hospedagem, liste os pets e aguarde escolha explícita — nunca assuma.
 2. Pet novo ou incompleto → `set_pet_size` / `create_pet` até sucesso (**antes** de disponibilidade).
 3. Check-in e check-out (YYYY-MM-DD): Roteador **ou** mensagem atual com duas datas claras; se já vieram antes e o cliente só completou o pet, **não** repita datas sem necessidade.
+   ⚠️ DISPONIBILIDADE ABERTA: se o cliente perguntar "quando vocês têm vaga?", "tem disponibilidade em X semana?", "quais datas estão livres?" sem citar um período específico, chame `get_kennel_availability` para diferentes intervalos do período mencionado e retorne ao cliente as opções disponíveis de uma vez — sem fazer ping-pong de data por data.
 4. Com pet **e** período OK, chame `get_kennel_availability` — valores, horários padrão e `room_type_options`.
+   ⚠️ SEM MENSAGEM DE PROCESSAMENTO: nunca envie "vou verificar", "já retorno", "aguarde" antes ou junto com a resposta — execute a tool e responda direto com o resultado.
 5. Apresente opções (campo `message` da tool + síntese curta) conforme COMUNICAÇÃO.
    Na creche, use também `last_day_client` e `pickup_time_hint` quando existirem.
 6. Tipo de quarto — guarde `room_type_id`; escolha clara → não volte ao passo 5.
@@ -157,9 +211,15 @@ REGRAS:
   sem o cliente confirmar na mensagem atual. Se faltar datas para o serviço pedido, pergunte (uma pergunta objetiva).
 - **Tools:** evite chamar get_kennel_availability várias vezes no mesmo turno **sem necessidade**. **Pode** chamar de novo no mesmo check-in/check-out se o cliente **mudar** o tipo de quarto, se precisar **corrigir** valores ou se faltar JSON confiável. Não envie mensagens pedindo "aguarde" — execute a tool e responda com o resultado.
 - Se o cliente pedir **explicitamente** atendimento humano, atendente ou falar com pessoa da loja: chame **escalate_to_human** (ou responda **uma** linha e chame na mesma rodada conforme a tool). **Não** continue coletando datas nessa mensagem sem antes tratar o pedido.
-- **PROIBIDO:** prometer “a equipe retorna” ou “vou alinhar” **sem** ter chamado **escalate_to_human** quando cabível (pedido explícito de humano **ou** aceite após oferta de especialista). **PROIBIDO:** handoff vago **sem** oferta clara de especialista quando faltar dado no cadastro.
+- **PROIBIDO:** prometer “a equipe retorna”, “encaminhei”, “já passei” ou “vou alinhar” **sem** ter chamado **escalate_to_human** quando cabível (pedido explícito de humano **ou** aceite após oferta de especialista). **PROIBIDO:** handoff vago **sem** oferta clara de especialista quando faltar dado no cadastro.
+- **PROIBIDO:** chamar **escalate_to_human** sem que o cliente tenha **aceitado explicitamente** o encaminhamento nesta rodada — confirmação de período, datas ou escolha de plano **não** é aceite de encaminhamento.
   Políticas de produto → **somente** CADASTRO + tools; para lacunas, use o fluxo **ESPECIALISTA** acima.
-- **Capacidade / “quantos pets” / vagas em tempo real:** **não invente** números nem ocupação da unidade. Se **description**/**features** do tipo de quarto (ou CADASTRO) disserem quantos pets por cliente, regra de quarto coletivo, etc., **pode** resumir ao cliente conforme o texto. O que **não** estiver escrito aí → diga que a loja confirma ou use telefone do cadastro — sem chute.
+- **Capacidade / “quantos pets” / vagas em tempo real:** **não invente** números nem ocupação da unidade.
+  Quando `description`/`features` disserem “X pets por cliente” ou “X pets por quarto”: isso é **regra de política de uso**,
+  não a capacidade total do hotel. Explique ao cliente como regra (“a regra deste quarto é até X pets por cliente”),
+  **nunca** como capacidade total (“Capacidade: X pets”). O `total_capacity` do banco é dado interno — não cite ao cliente.
+  Se a regra exigir especialista para determinada condição → siga a regra ⚠️ ESPECIALISTA OBRIGATÓRIO.
+  O que **não** estiver escrito no cadastro → diga que a loja confirma ou use telefone do cadastro — sem chute.
 - CRECHE (daycare): ao chamar as tools, checkout_date continua sendo o fim exclusivo do período (dia seguinte ao último
   dia de uso). As respostas das tools já trazem o último dia de uso e horário de retirada para você passar ao cliente —
   não confunda com o que é gravado no banco (sempre checkin/checkout como a tool recebeu).

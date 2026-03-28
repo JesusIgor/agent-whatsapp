@@ -4,6 +4,7 @@ import { BrainMessage, BrainAlert } from './brain.types'
 
 const OPENAI_URL = 'https://api.openai.com/v1/chat/completions'
 const MAX_TOOL_ROUNDS = 5
+const BRAIN_MODEL = process.env.OPENAI_BRAIN_MODEL?.trim() || 'gpt-5'
 
 export class BrainService {
 
@@ -33,7 +34,7 @@ export class BrainService {
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
-          model: 'gpt-4o-mini',
+          model: BRAIN_MODEL,
           max_tokens: 1000,
           temperature: 0.3,
           messages,
@@ -49,6 +50,10 @@ export class BrainService {
 
       const data = await response.json()
       const choice = data.choices?.[0]
+      const resolvedModel = (data.model as string | undefined) ?? BRAIN_MODEL
+      console.log(
+        `[Brain] LLM round=${round} | companyId=${companyId} | model_requested=${BRAIN_MODEL} | model_response=${resolvedModel} | finish_reason=${choice?.finish_reason ?? 'n/a'}`
+      )
 
       if (choice?.finish_reason === 'stop') {
         return {

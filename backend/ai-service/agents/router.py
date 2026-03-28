@@ -17,6 +17,14 @@ from tools.booking_tools import fetch_available_times_snapshot
 
 logger = logging.getLogger("ai-service.router")
 
+
+def _agent_configured_model_id(agent: Agent) -> str:
+    """ID do modelo configurado no Agno (pode diferir do snapshot resolvido pela API)."""
+    model = getattr(agent, "model", None)
+    mid = getattr(model, "id", None) if model is not None else None
+    return str(mid) if mid else "unknown"
+
+
 # Remove falas de "processamento" que ainda vazam do modelo (booking)
 _BOOKING_LEADING_NOISE = re.compile(
     r"(?is)"
@@ -220,10 +228,12 @@ async def run_router(message: str, context: dict, history: list) -> dict:
 
     router_response = router.run(router_input)
     router_ctx = _parse_router_response(router_response.content)
+    router_model = _agent_configured_model_id(router)
 
     agent_name = router_ctx.get("agent", "onboarding_agent")
     logger.info(
-        "Router decidiu → agent=%s | stage=%s | active_pet=%s | service=%s | date=%s | awaiting_confirmation=%s",
+        "Router decidiu → model=%s | agent=%s | stage=%s | active_pet=%s | service=%s | date=%s | awaiting_confirmation=%s",
+        router_model,
         agent_name,
         router_ctx.get("stage"),
         router_ctx.get("active_pet"),
@@ -274,12 +284,21 @@ async def run_router(message: str, context: dict, history: list) -> dict:
         )
         reply = _emergency_strip_verificar(reply)
 
-    logger.info("Especialista %s concluiu", agent_name)
+    specialist_model = _agent_configured_model_id(specialist)
+    logger.info(
+        "Especialista concluído → agent=%s | model=%s",
+        agent_name,
+        specialist_model,
+    )
 
     return {
         "reply": reply,
         "agent_used": agent_name,
         "router_ctx": router_ctx,
+        "llm_models": {
+            "router": router_model,
+            "specialist": specialist_model,
+        },
     }
 
 

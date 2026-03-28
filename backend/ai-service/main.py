@@ -47,7 +47,7 @@ class ReactivateRequest(BaseModel):
 
 
 # ─────────────────────────────────────────
-# Descreve imagem via GPT-4o-mini vision
+# Descreve imagem via visão (modelo em OPENAI_MODEL, default gpt-5)
 # ─────────────────────────────────────────
 async def describe_image(image_base64: str, caption: str = "") -> str:
     prompt = (
@@ -59,8 +59,9 @@ async def describe_image(image_base64: str, caption: str = "") -> str:
         prompt += f"\n\nO usuário também enviou a seguinte legenda: '{caption}'"
 
     try:
+        vision_model = os.getenv("OPENAI_MODEL", "gpt-5")
         response = await _openai_client.chat.completions.create(
-            model=os.getenv("OPENAI_MODEL", "gpt-4o-mini"),
+            model=vision_model,
             messages=[
                 {
                     "role": "user",
@@ -77,6 +78,12 @@ async def describe_image(image_base64: str, caption: str = "") -> str:
                 }
             ],
             max_tokens=500,
+        )
+        resolved = getattr(response, "model", None) or vision_model
+        logger.info(
+            "Vision concluída | requested_model=%s | response_model=%s",
+            vision_model,
+            resolved,
         )
         return (
             response.choices[0].message.content
@@ -148,9 +155,11 @@ async def run_agent(req: AgentRequest):
             history=history,
         )
 
+        models = result.get("llm_models") or {}
         logger.info(
-            "Resposta gerada | agent_used=%s | stage=%s | reply=%.80r",
+            "Resposta gerada | agent_used=%s | models=%s | stage=%s | reply=%.80r",
             result["agent_used"],
+            models,
             result.get("router_ctx", {}).get("stage"),
             result["reply"],
         )

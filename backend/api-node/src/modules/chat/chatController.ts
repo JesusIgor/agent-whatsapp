@@ -1,6 +1,10 @@
 import { Request, Response } from 'express'
 import { prisma } from '../../lib/prisma'
 
+/** Modelo solicitado na API; a resposta pode incluir `model` com o snapshot resolvido. */
+const CHAT_BUSINESS_MODEL =
+  process.env.OPENAI_CHAT_BUSINESS_MODEL?.trim() || 'gpt-5-mini'
+
 export async function chatBusiness(req: Request, res: Response) {
   try {
     const companyId = req.user!.companyId
@@ -133,7 +137,7 @@ ${servicesText}
         Authorization: `Bearer ${openaiApiKey}`,
       },
       body: JSON.stringify({
-        model: 'gpt-4o-mini',
+        model: CHAT_BUSINESS_MODEL,
         messages,
         temperature: 0.7,
         max_tokens: 1000,
@@ -150,6 +154,11 @@ ${servicesText}
     const reply =
       data.choices?.[0]?.message?.content ??
       'Desculpe, não consegui processar sua mensagem.'
+
+    const resolvedModel = (data.model as string | undefined) ?? CHAT_BUSINESS_MODEL
+    console.log(
+      `[ChatBusiness] LLM | companyId=${companyId} | model_requested=${CHAT_BUSINESS_MODEL} | model_response=${resolvedModel}`
+    )
 
     res.json({
       response: reply,

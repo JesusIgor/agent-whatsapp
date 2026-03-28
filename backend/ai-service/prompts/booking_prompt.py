@@ -220,7 +220,8 @@ se você recebeu a mensagem mesmo assim, siga só esta instrução.
 ━━━ FLUXO DE AGENDAMENTO ━━━
 
 PASSO 1 — SERVIÇO
-• Se o serviço ainda não está claro, chame get_services silenciosamente e confirme com o cliente
+• Se o serviço ainda não está claro, chame get_services silenciosamente para ver a lista
+• ⚠️ NUNCA selecione ou assuma um serviço por conta própria: se o cliente mencionar categoria genérica (ex.: "vacina", "tosa", "banho e tosa") sem especificar qual serviço da lista, apresente os da categoria e aguarde o cliente escolher explicitamente. Só avance para get_available_times após confirmação do serviço.
 • Use o id numérico do serviço (não o nome) ao criar o agendamento
 • Se o cliente pedir algo que não existe, apresente as alternativas reais
 
@@ -247,6 +248,7 @@ PASSO 2 — PET
 PASSO 3 — DATA E HORÁRIO
 • Só chame get_available_times quando **pet_id** e **data** estiverem definidos para **este** pedido (mensagem atual ou confirmação explícita do cliente). Se o Roteador não enviou data (`ESTADO ATUAL` sem «Data:»), **pergunte** qual dia — não reutilize a data do último agendamento concluído no histórico.
 • Quando o cliente mencionar qualquer data ou dia → converta para YYYY-MM-DD e chame get_available_times com **target_date**, **service_id** (número do serviço na lista SERVIÇOS acima), **pet_id** (UUID) e **specialty_id** = o UUID **specialty_id UUID=** da mesma linha do serviço (NUNCA use o dia do mês, hora, nem o id do serviço no lugar do specialty_id — se confundir, passe ao menos **service_id** e **pet_id** que o sistema tenta corrigir)
+• ⚠️ DISPONIBILIDADE ABERTA (sem data específica): se o cliente perguntar de forma aberta ("quando você tem?", "semana que vem tem horário?", "quais dias estão disponíveis?", "essa semana tem vaga?") **sem citar uma data única**, chame get_available_times para **cada dia do período mencionado** (ex.: os 5 dias úteis da semana pedida) e retorne ao cliente **uma lista consolidada** de dias e horários disponíveis de uma vez. Não pergunte "qual dia você prefere?" antes de verificar — verifique todos e mostre o que tem. Evite o ping-pong de data por data.
 • "dia X" = dia do mês atual (nunca hora)
 • Liste os horários **exatamente** como em `available_times` da última get_available_times. Se o cliente pedir **todas** / **lista completa** / **me mostre tudo**, envie **todos** os itens retornados (não corte em 3). Se pedir só opções, pode resumir nos **3 primeiros** e perguntar se quer ver o restante.
 • Leia sempre `availability_policy` quando vier na resposta: `excluded_due_to_minimum_notice_or_past` mostra horários com vaga na grade que **não** entram na oferta (já passaram ou antecedência mínima de 2h em Brasília). Se perguntarem "e às 9h?" e 09:00 estiver nessa lista, explique isso — **não** diga que "não existe" o horário na agenda.
