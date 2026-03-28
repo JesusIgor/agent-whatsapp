@@ -153,7 +153,13 @@ async function transcribeAudio(socket: any, msg: proto.IWebMessageInfo): Promise
     }
 
     const data = await response.json() as { text: string }
-    return data.text?.trim() || null
+    const text = data.text?.trim() || null
+    if (text) {
+      console.log(
+        `[Transcription] Whisper | model=whisper-1 | chars=${text.length}`
+      )
+    }
+    return text
   } catch (err) {
     console.error('[Transcription] Erro ao transcrever áudio:', err)
     return null

@@ -19,7 +19,7 @@ def build_sales_agent(context: dict, router_ctx: dict) -> Agent:
 
     return Agent(
         name="Sales Agent",
-        model=OpenAIChat(id="gpt-4o"),
+        model=OpenAIChat(id="gpt-5"),
         instructions=build_sales_prompt(context, router_ctx),
         tools=[get_services, set_pet_size],
     )

@@ -60,7 +60,7 @@ export async function getConversation(req: Request, res: Response) {
         messages: {
           skip: parseInt(offset as string),
           take: parseInt(limit as string),
-          orderBy: { createdAt: 'asc' },
+          orderBy: { createdAt: 'desc' },
         },
       },
     })
@@ -69,7 +69,12 @@ export async function getConversation(req: Request, res: Response) {
       return res.status(404).json({ error: 'Conversation not found' })
     }
 
-    res.json(conversation)
+    const chronological = {
+      ...conversation,
+      messages: [...conversation.messages].reverse(),
+    }
+
+    res.json(chronological)
   } catch (error) {
     console.error('Error getting conversation:', error)
     res.status(500).json({ error: 'Failed to get conversation' })
@@ -95,10 +100,10 @@ export async function getMessages(req: Request, res: Response) {
       where: { conversationId },
       skip: parseInt(offset as string),
       take: parseInt(limit as string),
-      orderBy: { createdAt: 'asc' },
+      orderBy: { createdAt: 'desc' },
     })
 
-    res.json(messages)
+    res.json([...messages].reverse())
   } catch (error) {
     console.error('Error getting messages:', error)
     res.status(500).json({ error: 'Failed to get messages' })

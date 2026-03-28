@@ -2,6 +2,7 @@ import { prisma } from '../../lib/prisma'
 import type { SentimentResult } from './sentiment.types'
 
 const OPENAI_API_URL = 'https://api.openai.com/v1/chat/completions'
+const SENTIMENT_MODEL = process.env.OPENAI_SENTIMENT_MODEL?.trim() || 'gpt-5-mini'
 
 const SYSTEM_PROMPT = `Você é um analista de relacionamento com clientes de petshops.
 Analise as mensagens abaixo e retorne SOMENTE um JSON válido, sem texto antes ou depois, sem markdown, sem blocos de código.
@@ -94,7 +95,7 @@ export class SentimentService {
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
-        model: 'gpt-4o-mini',
+        model: SENTIMENT_MODEL,
         max_tokens: 500,
         temperature: 0.2,
         messages: [
@@ -111,6 +112,10 @@ export class SentimentService {
 
     const json = await response.json()
     const content = json.choices?.[0]?.message?.content ?? ''
+    const resolvedModel = (json.model as string | undefined) ?? SENTIMENT_MODEL
+    console.log(
+      `[Sentiment] LLM | model_requested=${SENTIMENT_MODEL} | model_response=${resolvedModel}`
+    )
     const clean = content.replace(/```json|```/g, '').trim()
     const result: SentimentResult = JSON.parse(clean)
 
