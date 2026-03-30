@@ -174,7 +174,7 @@ Se precisar listar horários ou opções, separe por vírgula ou em linhas simpl
 
     return Agent(
         name="Lodging Agent",
-        model=OpenAIChat(id=OPENAI_MODEL, max_tokens=700),
+        model=OpenAIChat(id=OPENAI_MODEL, max_completion_tokens=700),
         instructions=instructions,
         tools=tools,
         tool_call_limit=12,

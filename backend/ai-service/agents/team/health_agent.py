@@ -124,7 +124,7 @@ Se precisar listar horários ou opções, separe por vírgula ou em linhas simpl
 
     return Agent(
         name="Health Agent",
-        model=OpenAIChat(id=OPENAI_MODEL, max_tokens=600),
+        model=OpenAIChat(id=OPENAI_MODEL, max_completion_tokens=600),
         instructions=instructions,
         tools=tools,
     )

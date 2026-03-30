@@ -77,7 +77,7 @@ async def describe_image(image_base64: str, caption: str = "") -> str:
                     ],
                 }
             ],
-            max_tokens=500,
+            max_completion_tokens=500,
         )
         resolved = getattr(response, "model", None) or vision_model
         logger.info(
