@@ -588,7 +588,13 @@ def build_lodging_tools(company_id: int, client_id, lodging_type: str = "hotel")
             ),
         }
 
-    return [get_kennel_availability, create_lodging, cancel_lodging, get_lodging_status, get_room_types_info]
+    # create_lodging não é exposto ao LLM: reservas de hotel/creche são fechadas apenas pelo humano na loja.
+    return [
+        get_kennel_availability,
+        cancel_lodging,
+        get_lodging_status,
+        get_room_types_info,
+    ]
 
 
 # ── Helper interno ─────────────────────────────────────────────────────────────

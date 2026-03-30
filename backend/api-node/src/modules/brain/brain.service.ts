@@ -4,7 +4,7 @@ import { BrainMessage, BrainAlert } from './brain.types'
 
 const OPENAI_URL = 'https://api.openai.com/v1/chat/completions'
 const MAX_TOOL_ROUNDS = 5
-const BRAIN_MODEL = process.env.OPENAI_BRAIN_MODEL?.trim() || 'gpt-5'
+const BRAIN_MODEL = process.env.OPENAI_BRAIN_MODEL?.trim() || 'gpt-4o-mini'
 
 export class BrainService {
 
@@ -35,7 +35,7 @@ export class BrainService {
         },
         body: JSON.stringify({
           model: BRAIN_MODEL,
-          max_tokens: 1000,
+          max_completion_tokens: 1000,
           temperature: 0.3,
           messages,
           tools: TOOLS,

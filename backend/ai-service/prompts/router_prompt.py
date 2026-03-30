@@ -125,14 +125,11 @@ lodging_agent → hospedagem (hotel ou creche para pets)
   • **Hotel ↔ creche:** se a mensagem atual mudar o tipo (só falava hotel e agora pede creche, ou o contrário),
     use checkin_mentioned=null e checkout_mentioned=null **salvo se** o cliente **escrever datas explícitas na mensagem atual**
     para esse novo serviço. Não arraste datas só do histórico de outro tipo de hospedagem.
-  • **Novo período após reserva concluída:** se uma reserva de hotel/creche **já foi confirmada** no histórico e o cliente pede outra hospedagem **sem** citar datas novas na mensagem atual → **checkin_mentioned** e **checkout_mentioned** = null; **active_pet** = null se não citou o pet nesta mensagem (mesma lógica do agendamento de serviço).
-  • **Igual ao booking de serviços:** **uma reserva confirmada por vez** para o **mesmo** pet (não fundir dois períodos ou dois tipos num único passo de confirmação). **Vários pets:** permitido em sequência — um `create_lodging` por pet. Se a mensagem misturar **dois** pedidos distintos de hospedagem, no JSON traga só o **principal** da mensagem atual; o resto fica para depois de concluir o primeiro.
-  • **Follow-up no mesmo tema:** após apresentar tipos de quarto/planos, perguntas sobre dois ou mais pets, regras do quarto,
-    documentação, "consigo fechar o plano aqui?", valores → **permaneça em lodging_agent** (ajuste só `lodging_type` se mudou hotel↔creche).
-  • **CONFIRMAÇÃO DE HOSPEDAGEM — CRÍTICO:** se o histórico mostrar que o assistente enviou um resumo de hospedagem
-    (datas de check-in/out, tipo de quarto, valor total) e pediu confirmação, e a mensagem atual for confirmação
-    ("sim", "confirmo", "pode confirmar", "ok", "isso", "perfeito") → use **lodging_agent** com awaiting_confirmation=true.
-    **NUNCA** use booking_agent para confirmar uma hospedagem — booking_agent não tem a tool de criar reservas de hospedagem.
+  • **Novo período após conversa de hospedagem:** se o cliente voltar a pedir hotel/creche **sem** citar datas novas na mensagem atual → **checkin_mentioned** e **checkout_mentioned** = null; **active_pet** = null se não citou o pet nesta mensagem (mesma lógica do agendamento de serviço).
+  • **Reserva fechada só por humano:** o assistente de hospedagem **não** grava reserva no sistema. Ele informa regras, valores indicativos, disponibilidade (tools) e oferece encaminhamento ao especialista. **Não** espere fluxo de "Confirma a reserva?" como booking de banho — **não** use awaiting_confirmation=true para fechar reserva de hotel/creche.
+  • **awaiting_confirmation (lodging) — só handoff:** use awaiting_confirmation=true **apenas** se o assistente perguntou se o cliente **quer ser encaminhado** a um especialista para marcar/contratar e o cliente **ainda não** respondeu. Se o cliente responder "sim" ao encaminhamento, **lodging_agent** chama escalate_to_human (não é booking_agent).
+  • **Follow-up no mesmo tema:** dúvidas sobre tipos de quarto, planos, dois pets, documentação, valores, disponibilidade → **permaneça em lodging_agent** (ajuste só `lodging_type` se mudou hotel↔creche).
+  • **NUNCA** use booking_agent para reservar hotel/creche — booking_agent é agenda por slot (banho, consulta, etc.).
 
 health_agent → dúvidas sobre saúde animal, vacinas, exames, emergências E agendamento de consultas veterinárias
   Gatilhos: "vacina", "exame", "cirurgia", "doença", "remédio", "veterinário", "consulta", "quero marcar consulta",
@@ -195,7 +192,7 @@ Analise TODO o histórico para extrair o contexto acumulado:
   ao trocar hotel ↔ creche sem datas novas na mensagem, use null em ambos
 
 ━━━ NOVO AGENDAMENTO APÓS UM JÁ CONCLUÍDO (CRÍTICO) ━━━
-Se no histórico a assistente **já concluiu** um agendamento ou consulta de saúde (confirmou horário, "agendado", "tudo certo", etc.), **ou** uma **reserva de hospedagem** foi confirmada, **ou** o cliente só agradeceu/encerrou esse ciclo, e a **mensagem atual** volta a pedir para **marcar/agendar/reservar** (banho, tosa, consulta, vacina, hotel, creche, "tem horário", "quero de novo", outro serviço, etc.):
+Se no histórico a assistente **já concluiu** um agendamento ou consulta de saúde (confirmou horário, "agendado", "tudo certo", etc.), **ou** um fluxo de **hotel/creche** chegou ao fim (ex.: cliente encaminhado ao especialista ou conversa de reserva encerrada), **ou** o cliente só agradeceu/encerrou esse ciclo, e a **mensagem atual** volta a pedir para **marcar/agendar/reservar** (banho, tosa, consulta, vacina, hotel, creche, "tem horário", "quero de novo", outro serviço, etc.):
 • **Não** reutilize automaticamente o pet, a data nem o horário do agendamento anterior.
 • Use **active_pet: null** se o cliente **não** escreveu o nome do pet **nesta** mensagem (não vale só o histórico do agendamento fechado).
 • Use **date_mentioned: null** e **selected_time: null** se a mensagem atual **não** trouxe data/horário novos (não vale repetir "a mesma sexta" por inferência — só se disser explícito "mesma data", "mesmo dia", etc.).
@@ -280,13 +277,16 @@ Exemplos:
 [Histórico: assistente explicou **creche/planos**. Mensagem atual: "consigo fechar os planos aqui?" / contratar pelo canal, **sem** pedir humano] →
 {{"agent":"lodging_agent","stage":"SCHEDULING","specialty_type":"lodging","lodging_type":"daycare","active_pet":null,"service":"Creche","checkin_mentioned":null,"checkout_mentioned":null,"awaiting_confirmation":false}}
 
-[Histórico: assistente de hospedagem enviou resumo com datas, tipo de quarto e valor total, pediu "Confirma?". Mensagem atual: "sim" / "confirmo" / "pode confirmar" / "ok"] →
-{{"agent":"lodging_agent","stage":"AWAITING_CONFIRMATION","specialty_type":"lodging","lodging_type":"hotel","active_pet":null,"service":"Hospedagem","checkin_mentioned":null,"checkout_mentioned":null,"awaiting_confirmation":true}}
+[Histórico: assistente de hospedagem perguntou se o cliente **quer ser encaminhado** a um especialista para marcar hotel/creche. Mensagem atual ainda **não** respondeu a isso (outro assunto)] →
+{{"agent":"lodging_agent","stage":"SCHEDULING","specialty_type":"lodging","lodging_type":"hotel","active_pet":null,"service":"Hospedagem","checkin_mentioned":null,"checkout_mentioned":null,"awaiting_confirmation":false}}
 
-[Histórico: assistente de **creche** enviou resumo com período e valor, pediu confirmação. Mensagem atual: "sim" / "confirmo"] →
+[Histórico: assistente perguntou "Quer que eu te encaminhe para um especialista para fechar a reserva?". Mensagem atual: "sim" / "quero" / "pode encaminhar"] →
+{{"agent":"lodging_agent","stage":"SCHEDULING","specialty_type":"lodging","lodging_type":"hotel","active_pet":null,"service":"Hospedagem","checkin_mentioned":null,"checkout_mentioned":null,"awaiting_confirmation":false}}
+
+[Histórico: assistente de hospedagem ofereceu encaminhamento e o cliente **ainda não** respondeu sim/não. Mensagem atual: só "?" ou silêncio operacional] →
 {{"agent":"lodging_agent","stage":"AWAITING_CONFIRMATION","specialty_type":"lodging","lodging_type":"daycare","active_pet":null,"service":"Creche","checkin_mentioned":null,"checkout_mentioned":null,"awaiting_confirmation":true}}
 
-[Reserva de hotel **já confirmada** no histórico; cliente: "quero deixar ele de novo no hotel"] →
+[Cliente **já** teve reserva de hotel tratada com humano no passado; mensagem atual: "quero deixar ele de novo no hotel" **sem** datas novas] →
 {{"agent":"lodging_agent","stage":"SCHEDULING","specialty_type":"lodging","lodging_type":"hotel","active_pet":null,"service":"Hospedagem","checkin_mentioned":null,"checkout_mentioned":null,"awaiting_confirmation":false}}
 
 "quero falar com um atendente" →
