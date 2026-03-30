@@ -17,12 +17,14 @@ def build_escalation_tools(company_id: int, client_id: str) -> list:
         Pausa a IA e registra escalonamento. Chame **apenas** quando:
         (1) O cliente pediu de forma **explícita** falar com humano/atendente/pessoa da loja/dono/gerente,
         ser transferido, ou for B2B/spam claro; **ou**
-        (2) Você **ofereceu** nesta conversa o auxílio de um **especialista da loja** para uma dúvida que
-        **não** está no cadastro/tools, e o cliente **aceitou** de forma clara (ex.: "sim", "quero", "pode",
+        (2) Você **ofereceu** nesta conversa o auxílio de um **especialista da loja** (dúvida fora do cadastro,
+        **ou** fechamento de reserva de hotel/creche), e o cliente **aceitou** de forma clara (ex.: "sim", "quero", "pode",
         "encaminha", "manda pra alguém da loja").
 
         **Não** chame para saudações ("oi", "olá", "olá pessoal"), conversa casual, ou enquanto o cliente
         ainda só **perguntou** e você ainda **não** ofereceu especialista (nessa fase responda ou ofereça ajuda).
+        **Não** chame se o cliente **recusou** o encaminhamento (ex.: "quero resolver por aqui", "prefiro por aqui",
+        "não precisa encaminhar") — isso **não** é aceite.
 
         Args:
             summary: Motivo concreto (1-3 frases) — o que o cliente pediu ou qual dúvida precisa da loja

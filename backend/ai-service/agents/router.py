@@ -47,6 +47,13 @@ _VERIFICAR_FAMILY = re.compile(
 _RETORNO_BREVE = re.compile(
     r"(?is)\b(?:te\s+)?retorno\s+em\s+breve\b"
 )
+# Promessa de acionar equipe/humano sem tool escalate_to_human (ex.: lodging recusou encaminhamento)
+_ALINHAR_EQUIPE = re.compile(
+    r"(?is)\b(?:vou|vamos)\s+alinhar\s+com\s+(?:a\s+)?equipe\b"
+)
+_JA_PASSEI_EQUIPE = re.compile(
+    r"(?is)\bjá\s+(?:passei|encaminhei)\s+(?:para\s+|pra\s+)?(?:a\s+)?equipe\b"
+)
 _VERIFICAR_REPROCESS_MAX = 3
 _REPROCESS_VERIFICAR_SUFFIX = """
 ━━━ REPROCESSAMENTO OBRIGATÓRIO (sistema) ━━━
@@ -54,7 +61,8 @@ A resposta anterior foi rejeitada: usou frase(s) do tipo "vou verificar" / "reto
 fora do fluxo de escalonamento humano (tool escalate_to_human).
 Gere UMA nova resposta ao cliente, em português, curta (WhatsApp):
 • PROIBIDO: "vou verificar", "deixa eu verificar", "estou verificando", "retorno em breve", "já volto",
-  "só um instante", "aguarde", ou qualquer promessa de checagem futura sem entregar o conteúdo agora.
+  "só um instante", "aguarde", "vou alinhar com a equipe", "já passei pra equipe", ou promessa de checagem/handoff
+  futuro **sem** ter chamado escalate_to_human com sucesso nesta rodada.
 • Se precisar de dados (horários, vagas, etc.), chame as tools do seu fluxo AGORA e responda com o resultado.
 • Seja direto: só a informação ou a pergunta final, sem narrar processo.
 """
@@ -66,6 +74,10 @@ def _reply_triggers_verificar_reprocess(reply: str) -> bool:
     if _VERIFICAR_FAMILY.search(reply):
         return True
     if _RETORNO_BREVE.search(reply):
+        return True
+    if _ALINHAR_EQUIPE.search(reply):
+        return True
+    if _JA_PASSEI_EQUIPE.search(reply):
         return True
     return False
 
@@ -90,10 +102,10 @@ def _escalation_tool_succeeded(run_output) -> bool:
 
 
 def _must_reprocess_verificar(agent_name: str, run_output, reply: str) -> bool:
-    """Reprocessa se a resposta usa 'vou verificar' / 'retorno em breve' fora do escalonamento com tool."""
+    """Reprocessa se a resposta promete verificação/handoff vago sem escalate_to_human bem-sucedido."""
     if not _reply_triggers_verificar_reprocess(reply):
         return False
-    if agent_name == "escalation_agent" and _escalation_tool_succeeded(run_output):
+    if _escalation_tool_succeeded(run_output):
         return False
     return True
 

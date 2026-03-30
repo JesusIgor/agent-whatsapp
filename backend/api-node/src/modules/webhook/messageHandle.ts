@@ -497,11 +497,11 @@ async function processMessage(
         `[Handler][company:${companyId}] Resposta enviada para ${phone} | agente: ${agentResponse.agent_used ?? 'n/a'} | estágio router: ${agentResponse.stage ?? 'n/a'} | estágio CRM: ${persistedStage ?? 'n/a'}`
       )
 
-      if (agentResponse.agent_used === 'escalation_agent') {
-        _notifyEscalationToOwner(companyId, phone, client.name).catch((err) =>
-          console.error(`[Escalation][company:${companyId}] Falha ao notificar owner:`, err)
-        )
-      }
+      // Qualquer agente pode chamar escalate_to_human (lodging, faq, etc.) — o mesmo template do dono
+      // só deve ir quando a IA pausou com motivo [ESCALONAMENTO] (ver guard dentro da função).
+      _notifyEscalationToOwner(companyId, phone, client.name).catch((err) =>
+        console.error(`[Escalation][company:${companyId}] Falha ao notificar owner:`, err)
+      )
     }
   } else {
     console.log(`[Handler][company:${companyId}] IA pausada para ${phone}, mensagem salva sem resposta.`)
@@ -523,6 +523,10 @@ async function _notifyEscalationToOwner(
 
   if (!freshClient?.aiPaused) return
 
+  const raw = freshClient.aiPauseReason ?? ''
+  // Pausa manual ou outro motivo — não dispara alerta de escalonamento
+  if (!raw.includes('[ESCALONAMENTO]')) return
+
   const petshop = await prisma.petshopProfile.findUnique({
     where: { companyId },
     select: { ownerPhone: true },
@@ -532,8 +536,6 @@ async function _notifyEscalationToOwner(
     console.warn(`[Escalation][company:${companyId}] owner_phone não cadastrado`)
     return
   }
-
-  const raw = freshClient.aiPauseReason ?? ''
   const match = raw.match(/\[ESCALONAMENTO\] ([\s\S]*?) \| Última msg: ([\s\S]*)/)
   const summary = match?.[1] ?? raw
   const lastMessage = match?.[2] ?? ''

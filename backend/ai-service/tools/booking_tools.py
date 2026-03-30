@@ -109,6 +109,55 @@ def _merge_notes_with_double_pair(user_notes, partner_appointment_id: str) -> st
     return f"{u}\n{line}" if u else line
 
 
+def _strip_internal_appointment_notes(notes) -> str | None:
+    """Remove linhas internas __DOUBLE_PAIR__ das observações ao remarcar."""
+    if not notes:
+        return None
+    lines = [
+        ln
+        for ln in str(notes).split("\n")
+        if ln.strip() and not ln.strip().startswith(DOUBLE_PAIR_PREFIX)
+    ]
+    out = "\n".join(lines).strip()
+    return out or None
+
+
+def _client_conflict_same_start(
+    cur,
+    company_id,
+    client_id,
+    scheduled_start,
+    exclude_appointment_ids: set | None = None,
+) -> dict | None:
+    """
+    Outro agendamento ativo do mesmo cliente com o mesmo instante de início (scheduled_date).
+    Evita dois serviços diferentes no mesmo horário para o mesmo tutor.
+    """
+    if scheduled_start is None or not client_id:
+        return None
+    ex = exclude_appointment_ids or set()
+    cur.execute(
+        """
+        SELECT a.id::text AS id, s.name AS service_name
+        FROM petshop_appointments a
+        JOIN petshop_services s ON s.id = a.service_id AND s.company_id = a.company_id
+        WHERE a.company_id = %s AND a.client_id = %s
+          AND a.status NOT IN ('completed', 'cancelled')
+          AND a.scheduled_date = %s
+        ORDER BY a.id
+        """,
+        (company_id, client_id, scheduled_start),
+    )
+    for row in cur.fetchall() or []:
+        rid = str(row["id"])
+        if rid not in ex:
+            return {
+                "id": rid,
+                "service_name": (row.get("service_name") or "Serviço").strip(),
+            }
+    return None
+
+
 def _requires_consecutive_slots(service_row: dict, pet_row: dict) -> bool:
     mult = service_row.get("duration_multiplier_large")
     if mult is None:
@@ -815,6 +864,39 @@ def build_booking_tools(company_id: int, client_id) -> list:
             else:
                 scheduled_date = None
 
+            clash = _client_conflict_same_start(
+                cur, company_id, client_id, scheduled_date, None
+            )
+            if clash:
+                return {
+                    "success": False,
+                    "error_code": "client_same_start_conflict",
+                    "message": (
+                        f"O cliente já tem «{clash['service_name']}» neste mesmo horário de início. "
+                        "Escolha outro horário ou cancele/remarque o agendamento existente antes."
+                    ),
+                }
+
+            second_scheduled = None
+            if need_double and second_row:
+                second_scheduled = datetime.combine(
+                    slot_row["slot_date"],
+                    second_row["slot_time"],
+                )
+                clash2 = _client_conflict_same_start(
+                    cur, company_id, client_id, second_scheduled, None
+                )
+                if clash2:
+                    return {
+                        "success": False,
+                        "error_code": "client_same_start_conflict",
+                        "message": (
+                            f"O cliente já tem «{clash2['service_name']}» no horário de início "
+                            f"do segundo bloco deste serviço. "
+                            "Escolha outro horário inicial ou ajuste o agendamento existente."
+                        ),
+                    }
+
             if not need_double:
                 cur.execute(
                     """
@@ -823,7 +905,7 @@ def build_booking_tools(company_id: int, client_id) -> list:
                          scheduled_date, status, confirmed, notes, price_charged)
                     VALUES (%s, %s, %s, %s, %s, %s, 'confirmed', TRUE, %s, %s)
                     RETURNING id
-                """,
+                    """,
                     (
                         company_id,
                         client_id,
@@ -844,7 +926,7 @@ def build_booking_tools(company_id: int, client_id) -> list:
                          scheduled_date, status, confirmed, notes, price_charged)
                     VALUES (%s, %s, %s, %s, %s, %s, 'confirmed', TRUE, %s, %s)
                     RETURNING id
-                """,
+                    """,
                     (
                         company_id,
                         client_id,
@@ -858,11 +940,6 @@ def build_booking_tools(company_id: int, client_id) -> list:
                 )
                 appointment_id = cur.fetchone()["id"]
 
-                second_scheduled = datetime.combine(
-                    slot_row["slot_date"],
-                    second_row["slot_time"],
-                )
-
                 cur.execute(
                     """
                     INSERT INTO petshop_appointments
@@ -870,7 +947,7 @@ def build_booking_tools(company_id: int, client_id) -> list:
                          scheduled_date, status, confirmed, notes, price_charged)
                     VALUES (%s, %s, %s, %s, %s, %s, 'confirmed', TRUE, %s, %s)
                     RETURNING id
-                """,
+                    """,
                     (
                         company_id,
                         client_id,
@@ -933,6 +1010,448 @@ def build_booking_tools(company_id: int, client_id) -> list:
                     f"(início {start_br}; duração base {dur} min)."
                 )
             return success_payload
+
+    def reschedule_appointment(
+        appointment_id: str,
+        new_slot_id: str,
+        confirmed: bool = False,
+        reason: str = None,
+    ) -> dict:
+        """
+        Remarca um agendamento: cancela o registro atual e cria no novo horário na **mesma transação**
+        (evita dois agendamentos ativos ou falha entre cancelar e criar).
+
+        Use quando o cliente quiser **trocar data/horário** de um agendamento já existente.
+        Fluxo sugerido: get_upcoming_appointments → cliente escolhe qual → get_available_times na nova data
+        → resumo "Remarcar de [antes] para [depois]? Confirma?" → reschedule_appointment com confirmed=True.
+
+        Args:
+            appointment_id: UUID do agendamento (use o `id` de get_upcoming_appointments; em serviços com
+                dois slots seguidos G/GG, é o mesmo `id` do item unificado, o do primeiro horário).
+            new_slot_id: UUID do slot novo (de get_available_times), no mesmo formato que create_appointment.
+            confirmed: Deve ser True somente após aceite explícito do cliente à remarcação.
+            reason: Opcional — registrado como cancel_reason ao encerrar o horário antigo.
+        """
+        if not confirmed:
+            return {
+                "success": False,
+                "message": "Aguardando confirmação explícita do cliente antes de remarcar.",
+            }
+        if not appointment_id or not str(appointment_id).strip():
+            return {"success": False, "message": "appointment_id é obrigatório."}
+        if not new_slot_id or not str(new_slot_id).strip():
+            return {"success": False, "message": "new_slot_id é obrigatório."}
+        if not _is_uuid(str(appointment_id).strip()):
+            return {
+                "success": False,
+                "message": "appointment_id inválido. Use o id retornado por get_upcoming_appointments.",
+            }
+        if not _is_uuid(str(new_slot_id).strip()):
+            return {
+                "success": False,
+                "message": "new_slot_id inválido. Chame get_available_times e use o slot_id da lista.",
+            }
+
+        if not client_id:
+            return {
+                "success": False,
+                "message": "Cliente não identificado. Não é possível remarcar.",
+            }
+
+        aid = str(appointment_id).strip()
+        nid = str(new_slot_id).strip()
+        cancel_note = (reason or "Remarcação via assistente").strip()
+
+        logger.info(
+            "reschedule_appointment | client_id=%s | from=%s | new_slot=%s",
+            client_id,
+            aid,
+            nid,
+        )
+
+        try:
+            with get_connection() as conn:
+                cur = conn.cursor()
+                cur.execute(
+                    """
+                    SELECT id, pet_id, service_id, notes, status, slot_id
+                    FROM petshop_appointments
+                    WHERE id = %s AND company_id = %s AND client_id = %s
+                    """,
+                    (aid, company_id, client_id),
+                )
+                old = cur.fetchone()
+                if not old:
+                    return {
+                        "success": False,
+                        "message": "Agendamento não encontrado.",
+                    }
+                if old.get("status") in ("completed", "cancelled"):
+                    return {
+                        "success": False,
+                        "message": "Agendamento já finalizado — não pode remarcar.",
+                    }
+                if not old.get("slot_id"):
+                    return {
+                        "success": False,
+                        "message": (
+                            "Este agendamento não está vinculado a um slot da agenda atual. "
+                            "Oriente o cliente a falar com a loja."
+                        ),
+                    }
+
+                ids_to_cancel = [str(old["id"])]
+                partner_id = _extract_double_pair_id(old.get("notes"))
+                if partner_id and _is_uuid(partner_id):
+                    cur.execute(
+                        """
+                        SELECT id, status FROM petshop_appointments
+                        WHERE id = %s AND company_id = %s AND client_id = %s
+                        """,
+                        (partner_id, company_id, client_id),
+                    )
+                    prow = cur.fetchone()
+                    if prow and prow.get("status") not in ("completed", "cancelled"):
+                        ids_to_cancel.append(str(prow["id"]))
+
+                ids_to_cancel_set = set(ids_to_cancel)
+
+                pet_id = str(old["pet_id"])
+                try:
+                    service_id = int(old["service_id"])
+                except (TypeError, ValueError):
+                    return {
+                        "success": False,
+                        "message": "Dados do agendamento antigo inválidos.",
+                    }
+                user_notes = _strip_internal_appointment_notes(old.get("notes"))
+
+                cur.execute(
+                    """
+                    SELECT id, price, price_by_size, duration_multiplier_large, duration_min
+                    FROM petshop_services
+                    WHERE id = %s AND company_id = %s AND is_active = TRUE
+                    """,
+                    (service_id, company_id),
+                )
+                service_row = cur.fetchone()
+                if not service_row:
+                    return {
+                        "success": False,
+                        "message": "Serviço do agendamento não está mais ativo.",
+                    }
+
+                cur.execute(
+                    """
+                    SELECT id, size, species, breed FROM petshop_pets
+                    WHERE id = %s AND client_id = %s AND company_id = %s AND is_active = TRUE
+                    """,
+                    (pet_id, client_id, company_id),
+                )
+                pet_row = cur.fetchone()
+                if not pet_row:
+                    return {
+                        "success": False,
+                        "message": "Pet não encontrado para este agendamento.",
+                    }
+                missing_pet_fields = []
+                if not pet_row.get("species"):
+                    missing_pet_fields.append("espécie (cachorro ou gato)")
+                if not pet_row.get("size"):
+                    missing_pet_fields.append(
+                        "porte (pequeno (P), médio (M), grande (G) ou extra grande (GG))"
+                    )
+                if missing_pet_fields:
+                    return {
+                        "success": False,
+                        "incomplete_pet": True,
+                        "missing_fields": missing_pet_fields,
+                        "message": f"Cadastro do pet incompleto. Faltam: {', '.join(missing_pet_fields)}.",
+                    }
+
+                cur.execute(
+                    """
+                    SELECT id, max_capacity, used_capacity, slot_date, slot_time,
+                           specialty_id, is_blocked
+                    FROM petshop_slots
+                    WHERE id = %s AND company_id = %s
+                    """,
+                    (nid, company_id),
+                )
+                slot_row = cur.fetchone()
+                if (
+                    not slot_row
+                    or (slot_row["max_capacity"] - slot_row["used_capacity"]) <= 0
+                ):
+                    return {
+                        "success": False,
+                        "error_code": "first_slot_full",
+                        "message": "Novo horário não está disponível. Chame get_available_times e escolha outro.",
+                    }
+
+                need_double = _requires_consecutive_slots(service_row, pet_row)
+                second_row = None
+                if need_double:
+                    cur.execute(
+                        """
+                        SELECT id, slot_time, max_capacity, used_capacity, is_blocked
+                        FROM petshop_slots
+                        WHERE company_id = %s AND specialty_id = %s AND slot_date = %s
+                        ORDER BY slot_time
+                        """,
+                        (
+                            company_id,
+                            slot_row["specialty_id"],
+                            slot_row["slot_date"],
+                        ),
+                    )
+                    day_slots = cur.fetchall()
+                    ids_list = [str(r["id"]) for r in day_slots]
+                    try:
+                        idx = ids_list.index(str(nid))
+                    except ValueError:
+                        return {
+                            "success": False,
+                            "error_code": "invalid_slot",
+                            "message": "Horário inválido para esta regra de agendamento.",
+                        }
+                    if idx >= len(day_slots) - 1:
+                        return {
+                            "success": False,
+                            "error_code": "no_consecutive_slot",
+                            "message": (
+                                "Este serviço exige dois horários seguidos para pets G/GG; "
+                                "não há segundo horário após o selecionado."
+                            ),
+                        }
+                    second_candidate = day_slots[idx + 1]
+                    cur.execute(
+                        """
+                        SELECT id, slot_time, max_capacity, used_capacity, is_blocked
+                        FROM petshop_slots
+                        WHERE company_id = %s AND id IN (%s, %s)
+                        FOR UPDATE
+                        """,
+                        (company_id, nid, second_candidate["id"]),
+                    )
+                    locked = {str(r["id"]): r for r in cur.fetchall()}
+                    first_l = locked.get(str(nid))
+                    second_row = locked.get(str(second_candidate["id"]))
+                    if not first_l or not second_row:
+                        return {
+                            "success": False,
+                            "error_code": "slot_not_found",
+                            "message": "Horário não encontrado após validação. Chame get_available_times de novo.",
+                        }
+                    if first_l.get("is_blocked") or (
+                        first_l["max_capacity"] - first_l["used_capacity"]
+                    ) <= 0:
+                        return {
+                            "success": False,
+                            "error_code": "first_slot_full",
+                            "message": "Horário inicial sem vaga. Escolha outro.",
+                        }
+                    if second_row.get("is_blocked"):
+                        return {
+                            "success": False,
+                            "error_code": "second_slot_blocked",
+                            "message": (
+                                "O horário seguinte está bloqueado. Escolha outro início para pets G/GG."
+                            ),
+                        }
+                    if (
+                        second_row["max_capacity"] - second_row["used_capacity"]
+                    ) <= 0:
+                        return {
+                            "success": False,
+                            "error_code": "second_slot_full",
+                            "message": (
+                                "O horário seguinte está lotado. Escolha outro início para pets G/GG."
+                            ),
+                        }
+
+                price_charged = _resolve_price_charged_from_service_and_pet(
+                    service_row, pet_row
+                )
+                slot_date = slot_row.get("slot_date")
+                slot_time_val = slot_row.get("slot_time")
+                if slot_date and slot_time_val:
+                    scheduled_date = datetime.combine(slot_date, slot_time_val)
+                else:
+                    scheduled_date = None
+
+                clash_r = _client_conflict_same_start(
+                    cur, company_id, client_id, scheduled_date, ids_to_cancel_set
+                )
+                if clash_r:
+                    return {
+                        "success": False,
+                        "error_code": "client_same_start_conflict",
+                        "message": (
+                            f"O cliente já tem «{clash_r['service_name']}» neste mesmo horário. "
+                            "Escolha outro horário ou cancele/remarque o outro serviço antes."
+                        ),
+                    }
+
+                second_scheduled_rs = None
+                if need_double and second_row:
+                    second_scheduled_rs = datetime.combine(
+                        slot_row["slot_date"],
+                        second_row["slot_time"],
+                    )
+                    clash_r2p = _client_conflict_same_start(
+                        cur,
+                        company_id,
+                        client_id,
+                        second_scheduled_rs,
+                        ids_to_cancel_set,
+                    )
+                    if clash_r2p:
+                        return {
+                            "success": False,
+                            "error_code": "client_same_start_conflict",
+                            "message": (
+                                f"O cliente já tem «{clash_r2p['service_name']}» no horário do segundo "
+                                f"bloco deste serviço. Escolha outro horário inicial ou ajuste o outro agendamento."
+                            ),
+                        }
+
+                for cid in ids_to_cancel:
+                    cur.execute(
+                        """
+                        UPDATE petshop_appointments
+                        SET status = 'cancelled', cancelled_at = NOW(), cancel_reason = %s
+                        WHERE id = %s AND company_id = %s AND client_id = %s
+                          AND status NOT IN ('completed', 'cancelled')
+                        """,
+                        (cancel_note, cid, company_id, client_id),
+                    )
+
+                if not need_double:
+                    cur.execute(
+                        """
+                        INSERT INTO petshop_appointments
+                            (company_id, client_id, pet_id, service_id, slot_id,
+                             scheduled_date, status, confirmed, notes, price_charged)
+                        VALUES (%s, %s, %s, %s, %s, %s, 'confirmed', TRUE, %s, %s)
+                        RETURNING id
+                        """,
+                        (
+                            company_id,
+                            client_id,
+                            pet_id,
+                            service_id,
+                            nid,
+                            scheduled_date,
+                            user_notes,
+                            price_charged,
+                        ),
+                    )
+                    new_appointment_id = cur.fetchone()["id"]
+                else:
+                    cur.execute(
+                        """
+                        INSERT INTO petshop_appointments
+                            (company_id, client_id, pet_id, service_id, slot_id,
+                             scheduled_date, status, confirmed, notes, price_charged)
+                        VALUES (%s, %s, %s, %s, %s, %s, 'confirmed', TRUE, %s, %s)
+                        RETURNING id
+                        """,
+                        (
+                            company_id,
+                            client_id,
+                            pet_id,
+                            service_id,
+                            nid,
+                            scheduled_date,
+                            user_notes,
+                            price_charged,
+                        ),
+                    )
+                    new_appointment_id = cur.fetchone()["id"]
+
+                    cur.execute(
+                        """
+                        INSERT INTO petshop_appointments
+                            (company_id, client_id, pet_id, service_id, slot_id,
+                             scheduled_date, status, confirmed, notes, price_charged)
+                        VALUES (%s, %s, %s, %s, %s, %s, 'confirmed', TRUE, %s, %s)
+                        RETURNING id
+                        """,
+                        (
+                            company_id,
+                            client_id,
+                            pet_id,
+                            service_id,
+                            second_row["id"],
+                            second_scheduled_rs,
+                            _merge_notes_with_double_pair(
+                                user_notes, str(new_appointment_id)
+                            ),
+                            price_charged,
+                        ),
+                    )
+                    second_aid = cur.fetchone()["id"]
+
+                    cur.execute(
+                        """
+                        UPDATE petshop_appointments
+                        SET notes = %s
+                        WHERE id = %s
+                        """,
+                        (
+                            _merge_notes_with_double_pair(
+                                user_notes, str(second_aid)
+                            ),
+                            str(new_appointment_id),
+                        ),
+                    )
+
+                cur.execute(
+                    """
+                    UPDATE clients
+                    SET conversation_stage = 'completed', updated_at = NOW()
+                    WHERE id = %s AND company_id = %s
+                    """,
+                    (client_id, company_id),
+                )
+
+                dur = int(service_row.get("duration_min") or 60)
+                start_br = slot_time_to_hhmm(slot_row.get("slot_time"))
+                payload: dict = {
+                    "success": True,
+                    "rescheduled": True,
+                    "previous_appointment_ids": ids_to_cancel,
+                    "appointment_id": str(new_appointment_id),
+                    "message": "Agendamento remarcado com sucesso!",
+                    "start_time": start_br,
+                    "uses_double_slot": bool(need_double and second_row),
+                }
+                if need_double and second_row:
+                    sec_br = slot_time_to_hhmm(second_row.get("slot_time"))
+                    payload["second_slot_start"] = sec_br
+                    end_br = hhmm_after_minutes(sec_br, dur)
+                    payload["service_end_time"] = end_br
+                    payload["customer_pickup_hint"] = (
+                        f"O serviço ocupa dois horários seguidos: início {start_br}, "
+                        f"segundo bloco a partir de {sec_br}; previsão de término ~{end_br} "
+                        f"(para buscar o pet, combine com o petshop — em geral após {end_br})."
+                    )
+                else:
+                    end_br = hhmm_after_minutes(start_br, dur)
+                    payload["service_end_time"] = end_br
+                    payload["customer_pickup_hint"] = (
+                        f"Previsão de término do serviço ~{end_br} "
+                        f"(início {start_br}; duração base {dur} min)."
+                    )
+                return payload
+        except Exception as exc:
+            logger.exception("reschedule_appointment falhou | client_id=%s", client_id)
+            return {
+                "success": False,
+                "message": "Falha ao remarcar. Tente de novo ou oriente o cliente a falar com a loja.",
+                "debug": str(exc),
+            }
 
     def cancel_appointment(appointment_id: str, reason: str = None) -> dict:
         """
@@ -1026,6 +1545,7 @@ def build_booking_tools(company_id: int, client_id) -> list:
         get_services,
         get_available_times,
         create_appointment,
+        reschedule_appointment,
         cancel_appointment,
     ]
 
