@@ -3,8 +3,8 @@ from agno.models.openai import OpenAIChat
 from agents.router_tool_plan import router_says_conversation_only
 from config import OPENAI_MODEL
 from utils.model_utils import get_max_tokens_param
-from prompts.scheduling_pet_shared import PASSO_2_PET_SHARED_BLOCK, PET_RULE_PARAGRAPH
-from prompts.service_cadastro import (
+from prompts.shared.scheduling_pet_shared import PASSO_2_PET_SHARED_BLOCK, PET_RULE_PARAGRAPH
+from prompts.shared.service_cadastro import (
     CADASTRO_HOSPEDAGEM_INTRO,
     DEFAULT_MAX_CADASTRO_DESCRIPTION_CHARS,
     build_lodging_room_types_cadastro_block,
@@ -208,7 +208,7 @@ COMUNICAÇÃO:
 
 ESCOLHA DE TIPO: cliente escolhe "Premium", "o mais barato", etc. → confirme em uma frase. Se quiser **fechar**, use o fluxo de **encaminhamento** — não pergunte "Confirma a reserva?" como se você fosse gravar no sistema.
 
-CADASTRO DE PET (quando faltar pet para contextualizar): `get_client_pets` → `set_pet_size` antes de `create_pet`. Cadastrar pet **não** fecha hotel/creche.
+CADASTRO DE PET (quando faltar pet para contextualizar): `get_client_pets` → mesmo fluxo que booking (**quatro dados** quando possível, **resumo + sim** antes de `create_pet`); `set_pet_size` antes de `create_pet`. Cadastrar pet **não** fecha hotel/creche.
 REGRA DO PET (igual booking/health): {PET_RULE_PARAGRAPH}
 {PASSO_2_PET_SHARED_BLOCK}
 
@@ -244,7 +244,7 @@ Se precisar listar horários ou opções, separe por vírgula ou em linhas simpl
         model=OpenAIChat(id=OPENAI_MODEL, **get_max_tokens_param(OPENAI_MODEL, 5000)),
         instructions=instructions,
         tools=tools,
-        tool_call_limit=12,
+        tool_call_limit=3,
         search_knowledge=False,
         add_search_knowledge_instructions=False,
         telemetry=False,

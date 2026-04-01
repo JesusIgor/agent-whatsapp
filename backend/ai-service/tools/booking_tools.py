@@ -138,6 +138,46 @@ def _lodging_offerings_for_catalog(cur, company_id: int) -> list[dict]:
     return out
 
 
+def fetch_services_snapshot(company_id: int) -> dict:
+    """
+    Busca o catálogo diretamente do banco para aquecer o cache do servidor
+    sem passar por uma rodada de tool calling do agente.
+    """
+    with get_connection() as conn:
+        cur = conn.cursor()
+        lodging_offerings = _lodging_offerings_for_catalog(cur, company_id)
+        cur.execute(
+            """
+            SELECT
+                ps.id,
+                ps.name,
+                ps.description,
+                ps.duration_min,
+                ps.price,
+                ps.price_by_size,
+                ps.duration_multiplier_large,
+                ps.specialty_id,
+                ps.block_ai_schedule,
+                ps.dependent_service_id,
+                dep.name AS dependent_service_name
+            FROM petshop_services ps
+            LEFT JOIN petshop_services dep ON dep.id = ps.dependent_service_id
+            WHERE ps.company_id = %s AND ps.is_active = TRUE
+            ORDER BY ps.name
+        """,
+            (company_id,),
+        )
+        services = cur.fetchall()
+
+    svc_list = [dict(s) for s in services]
+    return {
+        "services": svc_list,
+        "count": len(svc_list),
+        "lodging_offerings": lodging_offerings,
+        "lodging_offerings_count": len(lodging_offerings),
+    }
+
+
 # URL interna do backend Node (Docker network)
 BACKEND_INTERNAL_URL = os.getenv("BACKEND_INTERNAL_URL", "http://backend:3000")
 
@@ -365,47 +405,23 @@ def build_booking_tools(company_id: int, client_id) -> list:
         Serviços com block_ai_schedule=true NÃO devem ser agendados pelo bot via create_appointment.
         """
         cached = cache_get_services(company_id)
-        with get_connection() as conn:
-            cur = conn.cursor()
-            lodging_offerings = _lodging_offerings_for_catalog(cur, company_id)
-            if cached is not None:
-                out = {
-                    "services": cached["services"],
-                    "count": cached["count"],
-                    "lodging_offerings": lodging_offerings,
-                    "lodging_offerings_count": len(lodging_offerings),
-                }
-                return {**out, "from_cache": True}
-            cur.execute(
-                """
-                SELECT
-                    ps.id,
-                    ps.name,
-                    ps.description,
-                    ps.duration_min,
-                    ps.price,
-                    ps.price_by_size,
-                    ps.duration_multiplier_large,
-                    ps.specialty_id,
-                    ps.block_ai_schedule,
-                    ps.dependent_service_id,
-                    dep.name AS dependent_service_name
-                FROM petshop_services ps
-                LEFT JOIN petshop_services dep ON dep.id = ps.dependent_service_id
-                WHERE ps.company_id = %s AND ps.is_active = TRUE
-                ORDER BY ps.name
-            """,
-                (company_id,),
-            )
-            services = cur.fetchall()
-        svc_list = [dict(s) for s in services]
-        out = {
-            "services": svc_list,
-            "count": len(svc_list),
-            "lodging_offerings": lodging_offerings,
-            "lodging_offerings_count": len(lodging_offerings),
-        }
-        cache_set_services(company_id, {"services": svc_list, "count": len(svc_list)})
+        if cached is not None:
+            with get_connection() as conn:
+                cur = conn.cursor()
+                lodging_offerings = _lodging_offerings_for_catalog(cur, company_id)
+            out = {
+                "services": cached["services"],
+                "count": cached["count"],
+                "lodging_offerings": lodging_offerings,
+                "lodging_offerings_count": len(lodging_offerings),
+            }
+            return {**out, "from_cache": True}
+
+        out = fetch_services_snapshot(company_id)
+        cache_set_services(
+            company_id,
+            {"services": out["services"], "count": out["count"]},
+        )
         return out
 
     def _try_generate_slots() -> bool:
@@ -479,15 +495,9 @@ def build_booking_tools(company_id: int, client_id) -> list:
         pet_id: str | None = None,
     ) -> dict:
         """
-        Retorna horários disponíveis para uma especialidade em uma data específica.
-        Chamar SEMPRE que o cliente mencionar uma data — nunca inventar horários.
-
-        Args:
-            specialty_id: UUID da especialidade (get_specialties ou coluna specialty_id do serviço no contexto).
-                Se vier errado (ex.: número), ainda assim passe **service_id** — o sistema resolve a especialidade pelo serviço.
-            target_date: Data no formato YYYY-MM-DD
-            service_id: ID numérico do serviço (get_services) — obrigatório para G/GG com duração dobrada; também corrige specialty_id inválido
-            pet_id: UUID do pet (obrigatório). Chame get_client_pets antes — sem pet_id a tool não roda a lógica completa.
+        Retorna horários disponíveis para uma especialidade numa data.
+        Use sempre quando houver data. Não invente horários.
+        `pet_id` é obrigatório; `service_id` ajuda a corrigir specialty_id e duração.
         """
         try:
             parsed_date = date.fromisoformat(target_date)
@@ -786,23 +796,12 @@ def build_booking_tools(company_id: int, client_id) -> list:
         notes: str | None = None,
     ) -> dict:
         """
-        Cria **um** agendamento por chamada. Se o cliente pedir vários serviços de uma vez, o assistente
-        informa que faz um por vez e trata o primeiro antes de outro `create_appointment`.
-
-        Exige confirmed=True — nunca criar sem confirmação explícita do cliente.
-
-        Se já existir agendamento ativo para o **mesmo pet e mesmo serviço**, a tool falha com
-        error_code **use_reschedule_instead** — use **reschedule_appointment**, não uma segunda create.
-
-        Em success=true a resposta traz **pet_name**, **service_name**, **appointment_date** (YYYY-MM-DD),
-        **canonical_summary** e **start_time** exatamente como gravados — use na mensagem ao cliente.
-
-        Args:
-            pet_id: ID do pet (obtido via get_client_pets)
-            slot_id: ID do slot (obtido via get_available_times)
-            service_id: ID numérico do serviço (get_services); obrigatório na prática — se None, a tool retorna erro claro
-            confirmed: Deve ser True — só confirmar após aceite explícito do cliente
-            notes: Observações opcionais
+        Cria um agendamento por chamada.
+        Regras:
+        - exige confirmed=True
+        - slot_id vem de get_available_times
+        - service_id vem de get_services
+        - se já existir compromisso ativo equivalente, use reschedule_appointment
         """
         if not confirmed:
             return {
@@ -938,40 +937,6 @@ def build_booking_tools(company_id: int, client_id) -> list:
                     "incomplete_pet": True,
                     "missing_fields": missing_pet_fields,
                     "message": f"Cadastro do pet incompleto. Faltam: {', '.join(missing_pet_fields)}. O cliente deve completar o cadastro antes de agendar.",
-                }
-
-            # Evita duplicar compromisso quando o cliente pediu "remarcar" e o modelo chamou create em vez de reschedule
-            cur.execute(
-                """
-                SELECT a.id, a.scheduled_date,
-                       COALESCE(sl.slot_time, sch.start_time) AS start_time_raw
-                FROM petshop_appointments a
-                LEFT JOIN petshop_slots sl ON sl.id = a.slot_id
-                LEFT JOIN petshop_schedules sch ON sch.id = a.schedule_id
-                WHERE a.company_id = %s AND a.client_id = %s
-                  AND a.pet_id = %s AND a.service_id = %s
-                  AND a.status IN ('pending', 'confirmed')
-                  AND a.scheduled_date >= CURRENT_DATE
-                ORDER BY a.scheduled_date,
-                    COALESCE(sl.slot_time, sch.start_time) NULLS LAST
-                LIMIT 6
-                """,
-                (company_id, client_id, pet_id, service_id),
-            )
-            active_same = cur.fetchall()
-            if active_same:
-                primary = str(active_same[0]["id"])
-                return {
-                    "success": False,
-                    "error_code": "use_reschedule_instead",
-                    "message": (
-                        "Já existe agendamento ativo (pendente ou confirmado) para este pet e este serviço. "
-                        "Para mudar só data ou horário, use reschedule_appointment com appointment_id desse "
-                        "compromisso (veja get_upcoming_appointments) e new_slot_id do novo horário — "
-                        "não use create_appointment, senão ficam dois agendamentos no sistema."
-                    ),
-                    "appointment_id_for_reschedule": primary,
-                    "active_rows_found": len(active_same),
                 }
 
             # Verifica vaga no slot
@@ -1111,6 +1076,42 @@ def build_booking_tools(company_id: int, client_id) -> list:
             else:
                 scheduled_date = None
 
+            # Se já houver o mesmo serviço para o mesmo pet no MESMO DIA, trate como provável remarcação.
+            # Mantém permitido um segundo banho/serviço igual em OUTRO dia, que é um novo agendamento válido.
+            cur.execute(
+                """
+                SELECT a.id, a.scheduled_date,
+                       COALESCE(sl.slot_time, sch.start_time) AS start_time_raw
+                FROM petshop_appointments a
+                LEFT JOIN petshop_slots sl ON sl.id = a.slot_id
+                LEFT JOIN petshop_schedules sch ON sch.id = a.schedule_id
+                WHERE a.company_id = %s AND a.client_id = %s
+                  AND a.pet_id = %s AND a.service_id = %s
+                  AND a.status IN ('pending', 'confirmed')
+                  AND a.scheduled_date >= CURRENT_DATE
+                  AND a.scheduled_date::date = %s::date
+                ORDER BY a.scheduled_date,
+                    COALESCE(sl.slot_time, sch.start_time) NULLS LAST
+                LIMIT 6
+                """,
+                (company_id, client_id, pet_id, service_id, slot_row["slot_date"]),
+            )
+            active_same_day = cur.fetchall()
+            if active_same_day:
+                primary = str(active_same_day[0]["id"])
+                return {
+                    "success": False,
+                    "error_code": "use_reschedule_instead",
+                    "message": (
+                        "Já existe agendamento ativo para este pet e este mesmo serviço nesta data. "
+                        "Se a intenção é trocar o horário ou mover o atendimento deste dia, use "
+                        "reschedule_appointment com appointment_id desse compromisso e new_slot_id do novo horário. "
+                        "Se o cliente quiser manter este e marcar outro em outra data, create_appointment continua válido."
+                    ),
+                    "appointment_id_for_reschedule": primary,
+                    "active_rows_found": len(active_same_day),
+                }
+
             clash = _client_conflict_same_slot_start(
                 cur,
                 company_id,
@@ -1248,6 +1249,8 @@ def build_booking_tools(company_id: int, client_id) -> list:
                 "success": True,
                 "appointment_id": str(appointment_id),
                 "message": "Agendamento confirmado com sucesso!",
+                # Sinal explícito para o modelo: não usar vocabulário de remarcação
+                "rescheduled": False,
                 # Horários canônicos — a mensagem ao cliente DEVE usar estes campos
                 "start_time": start_br,
                 "uses_double_slot": bool(need_double and second_row),
@@ -1290,22 +1293,12 @@ def build_booking_tools(company_id: int, client_id) -> list:
         reason: str | None = None,
     ) -> dict:
         """
-        Remarca **um** agendamento por chamada. Se o cliente pedir remarcar vários de uma vez, o assistente
-        informa que faz um por vez e executa `reschedule_appointment` para o primeiro antes do próximo.
-
-        Cancela o registro atual e cria no novo horário na **mesma transação**
-        (evita dois agendamentos ativos ou falha entre cancelar e criar).
-
-        Use quando o cliente quiser **trocar data/horário** de um agendamento já existente.
-        Fluxo sugerido: get_upcoming_appointments → cliente escolhe qual → get_available_times na nova data
-        → resumo "Remarcar de [antes] para [depois]? Confirma?" → reschedule_appointment com confirmed=True.
-
-        Args:
-            appointment_id: UUID do agendamento (use o `id` de get_upcoming_appointments; em serviços com
-                dois slots seguidos G/GG, é o mesmo `id` do item unificado, o do primeiro horário).
-            new_slot_id: UUID do slot novo (de get_available_times), no mesmo formato que create_appointment.
-            confirmed: Deve ser True somente após aceite explícito do cliente à remarcação.
-            reason: Opcional — registrado como cancel_reason ao encerrar o horário antigo.
+        Remarca um agendamento por chamada, na mesma transação.
+        Use para trocar data/horário de compromisso já existente.
+        Regras:
+        - exige appointment_id de get_upcoming_appointments
+        - exige new_slot_id de get_available_times
+        - confirmed=True só após aceite explícito
         """
         if not confirmed:
             return {
@@ -1766,11 +1759,7 @@ def build_booking_tools(company_id: int, client_id) -> list:
     def cancel_appointment(appointment_id: str, reason: str = None) -> dict:
         """
         Cancela um agendamento existente do cliente.
-        used_capacity dos slots é atualizado por triggers no banco (sem UPDATE manual).
-
-        Args:
-            appointment_id: ID do agendamento a cancelar
-            reason: Motivo do cancelamento (opcional)
+        `appointment_id` deve vir de get_upcoming_appointments.
         """
         if not appointment_id:
             return {"success": False, "message": "appointment_id é obrigatório."}

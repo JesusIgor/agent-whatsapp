@@ -1,13 +1,15 @@
-import os
 import json
-import redis.asyncio as aioredis
+import os
 from typing import List
+
+import redis.asyncio as aioredis
 
 # TTL do histórico: 24 horas
 HISTORY_TTL = 60 * 60 * 24
 
 # Máximo de mensagens mantidas no contexto do agente
 MAX_HISTORY_MESSAGES = 20
+ROUTER_CTX_TTL = HISTORY_TTL
 
 
 def _redis_client():
@@ -24,6 +26,10 @@ def _redis_client():
 def _key(company_id: int, client_phone: str) -> str:
     """Chave única por tenant + cliente."""
     return f"chat:{company_id}:{client_phone}"
+
+
+def _router_ctx_key(company_id: int, client_phone: str) -> str:
+    return f"chat_router_ctx:{company_id}:{client_phone}"
 
 
 async def get_history(company_id: int, client_phone: str) -> List[dict]:
@@ -54,12 +60,41 @@ async def save_message(company_id: int, client_phone: str, role: str, content: s
         await r.aclose()
 
 
+async def get_router_ctx(company_id: int, client_phone: str) -> dict | None:
+    r = _redis_client()
+    try:
+        raw = await r.get(_router_ctx_key(company_id, client_phone))
+        if not raw:
+            return None
+        try:
+            data = json.loads(raw)
+        except json.JSONDecodeError:
+            return None
+        return data if isinstance(data, dict) else None
+    finally:
+        await r.aclose()
+
+
+async def save_router_ctx(company_id: int, client_phone: str, router_ctx: dict | None):
+    if not router_ctx:
+        return
+    r = _redis_client()
+    try:
+        await r.set(
+            _router_ctx_key(company_id, client_phone),
+            json.dumps(router_ctx, ensure_ascii=False),
+            ex=ROUTER_CTX_TTL,
+        )
+    finally:
+        await r.aclose()
+
+
 async def clear_history(company_id: int, client_phone: str):
     """
     Limpa o histórico de uma conversa (útil após conclusão ou timeout).
     """
     r = _redis_client()
     try:
-        await r.delete(_key(company_id, client_phone))
+        await r.delete(_key(company_id, client_phone), _router_ctx_key(company_id, client_phone))
     finally:
         await r.aclose()

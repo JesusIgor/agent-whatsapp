@@ -3,7 +3,7 @@ from prompts.booking_prompt_rules_body import (
     BOOKING_HEADER_TEMPLATE,
     BOOKING_RULES_BODY_TEMPLATE,
 )
-from prompts.scheduling_pet_shared import (
+from prompts.shared.scheduling_pet_shared import (
     PASSO_2_PET_SHARED_BLOCK,
     PET_RULE_PARAGRAPH,
     PROACTIVITY_SCHEDULING_BLOCK,

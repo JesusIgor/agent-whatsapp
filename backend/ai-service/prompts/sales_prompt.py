@@ -1,5 +1,5 @@
 from agents.router_tool_plan import router_says_conversation_only
-from prompts.service_cadastro import (
+from prompts.shared.service_cadastro import (
     DEFAULT_MAX_CADASTRO_DESCRIPTION_CHARS,
     build_lodging_room_types_cadastro_block,
     build_petshop_services_cadastro_block,
