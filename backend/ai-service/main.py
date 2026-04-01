@@ -9,7 +9,13 @@ from openai import AsyncOpenAI
 load_dotenv()
 
 from context.loader import load_context
-from memory.redis_memory import get_history, save_message, clear_history
+from memory.redis_memory import (
+    clear_history,
+    get_history,
+    get_router_ctx,
+    save_message,
+    save_router_ctx,
+)
 from agents.router import run_router
 from timezone_br import calendar_dates_reference_pt, today_sao_paulo, weekday_label_pt
 
@@ -149,7 +155,8 @@ async def run_agent(req: AgentRequest):
         context["today"] = _today_brt.strftime("%d/%m/%Y")
         context["today_iso"] = _today_brt.isoformat()
         context["today_weekday"] = weekday_label_pt(_today_brt)
-        context["calendar_dates_reference"] = calendar_dates_reference_pt(_today_brt, 45)
+        context["calendar_dates_reference"] = calendar_dates_reference_pt(_today_brt, 10)
+        context["calendar_router_reference"] = calendar_dates_reference_pt(_today_brt, 7)
 
         # 2. Se houver imagem, descreve via vision e monta mensagem enriquecida
         message_for_agent = req.message
@@ -169,6 +176,7 @@ async def run_agent(req: AgentRequest):
 
         # 3. Carrega histórico do Redis
         history = await get_history(req.company_id, req.client_phone)
+        previous_router_ctx = await get_router_ctx(req.company_id, req.client_phone)
 
         # 4. Salva mensagem do usuário no histórico (versão enriquecida se houver imagem)
         await save_message(req.company_id, req.client_phone, "user", message_for_agent)
@@ -179,6 +187,7 @@ async def run_agent(req: AgentRequest):
                 message=message_for_agent,
                 context=context,
                 history=history,
+                previous_router_ctx=previous_router_ctx,
             )
         except Exception:
             logger.exception(
@@ -213,6 +222,11 @@ async def run_agent(req: AgentRequest):
             reply = _connection_fallback_reply(context)
         else:
             await save_message(req.company_id, req.client_phone, "assistant", reply)
+            await save_router_ctx(
+                req.company_id,
+                req.client_phone,
+                result.get("router_ctx"),
+            )
 
         return AgentResponse(
             reply=reply,

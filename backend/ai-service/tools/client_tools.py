@@ -20,6 +20,27 @@ PET_SIZE_GATE_PREFIX = "pet_size_gate"
 PET_SIZE_GATE_TTL_SEC = 7200
 
 
+def fetch_client_pets_snapshot(company_id: int, client_id: str) -> dict | None:
+    """Executa a mesma leitura de get_client_pets sem passar pelo loop de tools."""
+    if not client_id or not str(client_id).strip():
+        return None
+    with get_connection() as conn:
+        cur = conn.cursor()
+        cur.execute(
+            """
+            SELECT id, name, species, breed, size, weight_kg, gender
+            FROM petshop_pets
+            WHERE company_id = %s AND client_id = %s AND is_active = TRUE
+            ORDER BY name
+        """,
+            (company_id, client_id),
+        )
+        pets = cur.fetchall()
+    out = {"pets": [dict(p) for p in pets], "count": len(pets)}
+    cache_set_client_pets(company_id, str(client_id), out)
+    return out
+
+
 def _pet_size_gate_key(company_id: int, client_id: str, pet_name: str) -> str:
     n = (pet_name or "").strip().lower()
     return f"{PET_SIZE_GATE_PREFIX}:{company_id}:{client_id}:{n}"
@@ -402,6 +423,43 @@ def _merge_upcoming_appointment_rows(rows: list) -> list:
     return out
 
 
+def fetch_upcoming_appointments_snapshot(company_id: int, client_id: str) -> list | None:
+    """Executa a mesma leitura de get_upcoming_appointments sem tool calling."""
+    if not client_id or not str(client_id).strip():
+        return None
+    with get_connection() as conn:
+        cur = conn.cursor()
+        cur.execute(
+            """
+            SELECT
+                a.id,
+                a.scheduled_date,
+                a.status,
+                a.notes,
+                COALESCE(sl.slot_time, sch.start_time) AS start_time_raw,
+                svc.name AS service_name,
+                COALESCE(svc.duration_min, 60) AS duration_min,
+                svc.duration_multiplier_large,
+                p.size AS pet_size,
+                p.name AS pet_name
+            FROM petshop_appointments a
+            JOIN petshop_services svc ON svc.id = a.service_id
+            JOIN petshop_pets p ON p.id = a.pet_id
+            LEFT JOIN petshop_slots sl ON sl.id = a.slot_id
+            LEFT JOIN petshop_schedules sch ON sch.id = a.schedule_id
+            WHERE a.company_id = %s
+              AND a.client_id = %s
+              AND a.status IN ('pending', 'confirmed')
+              AND a.scheduled_date >= CURRENT_DATE
+            ORDER BY a.scheduled_date,
+                COALESCE(sl.slot_time, sch.start_time) NULLS LAST
+        """,
+            (company_id, client_id),
+        )
+        rows = [dict(r) for r in cur.fetchall()]
+    return _merge_upcoming_appointment_rows(rows)
+
+
 def build_client_tools(company_id: int, client_id: str) -> list:
     """
     Retorna as tools de cliente com company_id e client_id pré-vinculados via closure.
@@ -411,60 +469,28 @@ def build_client_tools(company_id: int, client_id: str) -> list:
     def get_client_pets() -> dict:
         """
         Lista os pets ativos do cliente.
-        Chamar SEMPRE antes de cadastrar um pet para evitar duplicatas.
+        Use para validar nome, UUID e porte antes de cadastro ou agenda.
         """
         if client_id:
             cached = cache_get_client_pets(company_id, str(client_id))
             if cached is not None:
                 return {**cached, "from_cache": True}
-        with get_connection() as conn:
-            cur = conn.cursor()
-            cur.execute(
-                """
-                SELECT id, name, species, breed, size, weight_kg, gender
-                FROM petshop_pets
-                WHERE company_id = %s AND client_id = %s AND is_active = TRUE
-                ORDER BY name
-            """,
-                (company_id, client_id),
-            )
-            pets = cur.fetchall()
-        out = {"pets": [dict(p) for p in pets], "count": len(pets)}
-        if client_id:
-            cache_set_client_pets(company_id, str(client_id), out)
-        return out
+        return fetch_client_pets_snapshot(company_id, str(client_id)) or {"pets": [], "count": 0}
 
     def create_pet(name: str, species: str, breed: str, size: str) -> dict:
         """
         Cadastra um novo pet para o cliente.
-        TODOS os 4 campos são OBRIGATÓRIOS — incluindo o porte.
-        O porte DEVE ter sido perguntado e informado EXPLICITAMENTE pelo cliente.
-        NUNCA deduza o porte pela raça — sempre pergunte antes de chamar esta tool.
-
-        **Obrigatório:** antes de `create_pet`, chame **set_pet_size** com o **mesmo nome** do pet e o porte que o
-        **cliente disse**. Sem isso, `create_pet` é **rejeitado** pelo sistema (evita porte inventado pela IA).
-        O `size` passado em `create_pet` deve ser **idêntico** ao confirmado em `set_pet_size`.
-
-        ATENÇÃO — RAÇA NÃO É NOME:
-        Raças são palavras como: "Bull Terrier", "Golden Retriever", "Labrador", "Poodle",
-        "Shih Tzu", "Yorkshire", "Bulldog", "Beagle", "Dachshund", "Husky", "Pastor Alemão",
-        "Lhasa Apso", "Maltês", "Rottweiler", "Chihuahua", "Pug", "Dobermann", "Sem raça definida" etc.
-        Se o cliente mencionar apenas uma raça, NÃO use a raça como nome — pergunte qual é
-        o nome/apelido do pet antes de prosseguir. O nome é o apelido dado pelo dono
-        (ex: "Rex", "Bolinha", "Max", "Luna", "Mel", "Toby").
-
-        PROIBIDO inventar dados: nome genérico (gato, cachorro 1), raça "Sem raça definida"
-        sem o cliente ter dito que não sabe, ou porte padrão — o sistema rejeita nomes inválidos.
-
-        Se o cliente **já informou** os quatro campos em mensagens anteriores (mesmo em várias linhas),
-        **chame esta tool** em vez de perguntar de novo o mesmo dado — repetir pergunta já respondida é erro.
+        Regras curtas:
+        - exige nome, espécie, raça e porte
+        - chame set_pet_size antes, com o mesmo nome e porte
+        - não invente dados nem use raça como nome
+        - use só cachorro ou gato em species
 
         Args:
-            name: Nome/apelido do pet dado pelo dono (NÃO pode ser uma raça)
-            species: Espécie — 'cachorro' ou 'gato'
-            breed: Raça real (ex.: Persa, Labrador, SRD) — **não** use só "gato" ou "cachorro" como raça;
-                   'Sem raça definida' somente se o cliente disser explicitamente que não sabe (a API rejeita raça = espécie).
-            size: Porte — 'P', 'M', 'G' ou 'GG' (DEVE ter sido PERGUNTADO ao cliente)
+            name: Apelido real do pet
+            species: 'cachorro' ou 'gato'
+            breed: Raça real, ou "Sem raça definida" só se o cliente disser
+            size: Porte confirmado ('P', 'M', 'G' ou 'GG')
         """
         missing = []
         if not name or not name.strip():
@@ -783,37 +809,7 @@ def build_client_tools(company_id: int, client_id: str) -> list:
 
     def get_upcoming_appointments() -> list:
         """Retorna os próximos agendamentos confirmados ou pendentes do cliente."""
-        with get_connection() as conn:
-            cur = conn.cursor()
-            cur.execute(
-                """
-                SELECT
-                    a.id,
-                    a.scheduled_date,
-                    a.status,
-                    a.notes,
-                    COALESCE(sl.slot_time, sch.start_time) AS start_time_raw,
-                    svc.name AS service_name,
-                    COALESCE(svc.duration_min, 60) AS duration_min,
-                    svc.duration_multiplier_large,
-                    p.size AS pet_size,
-                    p.name AS pet_name
-                FROM petshop_appointments a
-                JOIN petshop_services svc ON svc.id = a.service_id
-                JOIN petshop_pets p ON p.id = a.pet_id
-                LEFT JOIN petshop_slots sl ON sl.id = a.slot_id
-                LEFT JOIN petshop_schedules sch ON sch.id = a.schedule_id
-                WHERE a.company_id = %s
-                  AND a.client_id = %s
-                  AND a.status IN ('pending', 'confirmed')
-                  AND a.scheduled_date >= CURRENT_DATE
-                ORDER BY a.scheduled_date,
-                    COALESCE(sl.slot_time, sch.start_time) NULLS LAST
-            """,
-                (company_id, client_id),
-            )
-            rows = [dict(r) for r in cur.fetchall()]
-        return _merge_upcoming_appointment_rows(rows)
+        return fetch_upcoming_appointments_snapshot(company_id, str(client_id)) or []
 
     return [
         get_client_pets,

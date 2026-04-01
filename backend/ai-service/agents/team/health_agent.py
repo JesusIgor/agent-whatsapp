@@ -3,8 +3,8 @@ from agno.models.openai import OpenAIChat
 from agents.router_tool_plan import router_says_conversation_only
 from config import OPENAI_MODEL
 from utils.model_utils import get_max_tokens_param
-from prompts.scheduling_pet_shared import build_health_pet_scheduling_section
-from prompts.service_cadastro import (
+from prompts.shared.scheduling_pet_shared import build_health_pet_scheduling_section
+from prompts.shared.service_cadastro import (
     DEFAULT_MAX_CADASTRO_DESCRIPTION_CHARS,
     build_blocked_services_block,
     build_lodging_room_types_cadastro_block,
@@ -222,4 +222,5 @@ Se precisar listar horários ou opções, separe por vírgula ou em linhas simpl
         model=OpenAIChat(id=OPENAI_MODEL, **get_max_tokens_param(OPENAI_MODEL, 5000)),
         instructions=instructions,
         tools=tools,
+        tool_call_limit=4,
     )
