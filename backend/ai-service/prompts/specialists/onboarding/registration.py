@@ -1,3 +1,4 @@
+from prompts.scheduling_pet_shared import WRITE_TOOLS_CONFIRMATION_BLOCK
 from prompts.specialists.onboarding.common import build_catalog_context, pet_state_line
 
 
@@ -25,6 +26,7 @@ def build_onboarding_registration_prompt(context: dict, router_ctx: dict) -> str
 {f"Cliente: {client_name}" if client_name else "Cliente ainda não identificado pelo nome."}
 {f"Estágio CRM: {client_stage}" if client_stage else ""}
 
+{WRITE_TOOLS_CONFIRMATION_BLOCK}
 ━━━ ESCOPO DESTE AGENTE ━━━
 FAZ: boas-vindas, identificar o cliente e cadastrar pet.
 FAZ: usar escalate_to_human quando o cliente aceitar encaminhamento.
@@ -91,6 +93,7 @@ CHECKLIST DOS 4 CAMPOS:
 PETS JÁ NO SISTEMA:
 • Se get_client_pets trouxer o mesmo nome com size preenchido, o cadastro já está completo; não pergunte porte de novo.
 • Se houver duplicata ou falta de campo, informe só o que falta segundo a tool.
+• **Um pet só** na lista e o cliente citar **outro** nome (ou possível typo) com porte: **desambigue** — é o pet já cadastrado (cite o nome da tool) ou um **novo**? Só trate como cadastro novo ou chame **set_pet_size** com o nome certo do banco após resposta clara. Se **set_pet_size** vier com **disambiguation**, siga o **hint** na mesma rodada.
 
 PÓS-CADASTRO / COMPLETED:
 • Se o histórico já mostrar cadastro concluído e o cliente só agradecer, não repita confirmação nem create_pet.
