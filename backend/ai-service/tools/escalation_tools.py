@@ -14,21 +14,15 @@ def build_escalation_tools(company_id: int, client_id: str) -> list:
 
     def escalate_to_human(summary: str, last_message: str) -> dict:
         """
-        Pausa a IA e registra escalonamento. Chame **apenas** quando:
-        (1) O cliente pediu de forma **explícita** falar com humano/atendente/pessoa da loja/dono/gerente,
-        ser transferido, ou for B2B/spam claro; **ou**
-        (2) Você **ofereceu** nesta conversa o auxílio de um **especialista da loja** (dúvida fora do cadastro,
-        **ou** fechamento de reserva de hotel/creche), e o cliente **aceitou** de forma clara (ex.: "sim", "quero", "pode",
-        "encaminha", "manda pra alguém da loja").
+        Pausa a IA e registra escalonamento para a equipe humana.
 
-        **Não** chame para saudações ("oi", "olá", "olá pessoal"), conversa casual, ou enquanto o cliente
-        ainda só **perguntou** e você ainda **não** ofereceu especialista (nessa fase responda ou ofereça ajuda).
-        **Não** chame se o cliente **recusou** o encaminhamento (ex.: "quero resolver por aqui", "prefiro por aqui",
-        "não precisa encaminhar") — isso **não** é aceite.
+        Use quando: pedido explícito de humano/atendente; B2B/spam; ou assunto claramente fora do escopo
+        do petshop (produtos/serviços não relacionados a pets, roleplay tipo «sou pintor», bicicletas,
+        construção, papo aleatório sem vínculo com serviços da loja).
+        Também: cliente **aceitou** encaminhamento humano depois de dizer que **já fez** o pré-requisito e
+        quer o serviço **block_ai_schedule** (fluxo SERVIÇOS BLOQUEADOS — booking/health).
 
-        Args:
-            summary: Motivo concreto (1-3 frases) — o que o cliente pediu ou qual dúvida precisa da loja
-            last_message: Última mensagem do cliente, literal
+        Não use para: apenas «oi»/«olá»/«obrigado» isolados sem outro tema (responda curto e pergunte se pode ajudar com petshop).
         """
         if not summary or not summary.strip():
             return {"success": False, "message": "summary é obrigatório para o escalonamento."}

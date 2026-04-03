@@ -9,9 +9,18 @@ from openai import AsyncOpenAI
 load_dotenv()
 
 from context.loader import load_context
-from memory.redis_memory import get_history, save_message, clear_history
+from memory.history_summary import ensure_rolling_summary, summary_prefix_for_prompt
+from memory.message_sanitize import sanitize_assistant_for_history
+from memory.redis_memory import (
+    clear_history,
+    delete_summary_state,
+    get_history,
+    get_router_ctx,
+    save_message,
+    save_router_ctx,
+)
 from agents.router import run_router
-from timezone_br import today_sao_paulo
+from timezone_br import calendar_dates_reference_pt, today_sao_paulo, weekday_label_pt
 
 logging.basicConfig(
     level=logging.INFO,
@@ -21,6 +30,39 @@ logging.basicConfig(
 logger = logging.getLogger("ai-service")
 
 app = FastAPI(title="Petshop AI Service")
+
+_OPENAI_ERROR_PATTERNS = [
+    "Could not finish the message",
+    "max_tokens or model output limit was reached",
+    "max_completion_tokens",
+    "context length exceeded",
+    "rate limit reached",
+    "too many requests",
+    "the model produced invalid content",
+    "content_filter",
+]
+
+
+def _is_openai_error_message(reply: str) -> bool:
+    if not reply:
+        return False
+    return any(p.lower() in reply.lower() for p in _OPENAI_ERROR_PATTERNS)
+
+
+def _connection_fallback_reply(context: dict) -> str:
+    """
+    Mensagem ao cliente quando a IA falha (OpenAI/timeout/erro do agente).
+    Inclui telefone do petshop quando cadastrado.
+    """
+    phone = (context.get("petshop_phone") or "").strip()
+    company = (context.get("company_name") or "o estabelecimento").strip()
+    base = (
+        "Estamos com uma instabilidade na conexão por aqui e não consegui seguir com seu atendimento agora. "
+        f"O ideal é falar direto com {company}"
+    )
+    if phone:
+        return f"{base} pelo telefone {phone}."
+    return f"{base} pelos canais oficiais da loja."
 
 _openai_client = AsyncOpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
@@ -77,7 +119,7 @@ async def describe_image(image_base64: str, caption: str = "") -> str:
                     ],
                 }
             ],
-            max_tokens=500,
+            max_completion_tokens=500,
         )
         resolved = getattr(response, "model", None) or vision_model
         logger.info(
@@ -112,19 +154,12 @@ async def run_agent(req: AgentRequest):
         context = await load_context(req.company_id, req.client_phone)
 
         # Injeta data atual em America/Sao_Paulo
-        _PT_WEEKDAYS = [
-            "Segunda-feira",
-            "Terça-feira",
-            "Quarta-feira",
-            "Quinta-feira",
-            "Sexta-feira",
-            "Sábado",
-            "Domingo",
-        ]
         _today_brt = today_sao_paulo()
         context["today"] = _today_brt.strftime("%d/%m/%Y")
         context["today_iso"] = _today_brt.isoformat()
-        context["today_weekday"] = _PT_WEEKDAYS[_today_brt.weekday()]
+        context["today_weekday"] = weekday_label_pt(_today_brt)
+        context["calendar_dates_reference"] = calendar_dates_reference_pt(_today_brt, 10)
+        context["calendar_router_reference"] = calendar_dates_reference_pt(_today_brt, 7)
 
         # 2. Se houver imagem, descreve via vision e monta mensagem enriquecida
         message_for_agent = req.message
@@ -142,18 +177,43 @@ async def run_agent(req: AgentRequest):
             if req.message:
                 message_for_agent += f"\n\nLegenda enviada pelo usuário: {req.message}"
 
-        # 3. Carrega histórico do Redis
-        history = await get_history(req.company_id, req.client_phone)
+        previous_router_ctx = await get_router_ctx(req.company_id, req.client_phone)
 
-        # 4. Salva mensagem do usuário no histórico (versão enriquecida se houver imagem)
+        # 3. Grava user; atualiza resumo rolante; monta histórico (últimas N cruas + resumo estruturado)
         await save_message(req.company_id, req.client_phone, "user", message_for_agent)
+        await ensure_rolling_summary(req.company_id, req.client_phone)
 
-        # 5. Executa o router agent
-        result = await run_router(
-            message=message_for_agent,
-            context=context,
-            history=history,
+        tail = await get_history(req.company_id, req.client_phone)
+        if tail and tail[-1].get("role") == "user":
+            tail = tail[:-1]
+
+        summary_txt = await summary_prefix_for_prompt(req.company_id, req.client_phone)
+        history = (
+            [{"role": "system", "content": summary_txt}] + tail
+            if summary_txt
+            else tail
         )
+
+        # 4. Executa o router agent
+        try:
+            result = await run_router(
+                message=message_for_agent,
+                context=context,
+                history=history,
+                previous_router_ctx=previous_router_ctx,
+            )
+        except Exception:
+            logger.exception(
+                "run_router falhou | company_id=%s | phone=%s",
+                req.company_id,
+                req.client_phone,
+            )
+            fallback = _connection_fallback_reply(context)
+            return AgentResponse(
+                reply=fallback,
+                agent_used="system",
+                stage=None,
+            )
 
         models = result.get("llm_models") or {}
         logger.info(
@@ -165,16 +225,35 @@ async def run_agent(req: AgentRequest):
         )
 
         # 6. Salva resposta do agente no histórico
-        await save_message(
-            req.company_id, req.client_phone, "assistant", result["reply"]
-        )
+        reply = result["reply"]
+        if _is_openai_error_message(reply):
+            logger.warning(
+                "Resposta de erro da OpenAI não salva | agent=%s | reply=%.120r",
+                result["agent_used"],
+                reply,
+            )
+            reply = _connection_fallback_reply(context)
+        else:
+            await save_message(
+                req.company_id,
+                req.client_phone,
+                "assistant",
+                sanitize_assistant_for_history(reply),
+            )
+            await save_router_ctx(
+                req.company_id,
+                req.client_phone,
+                result.get("router_ctx"),
+            )
 
         return AgentResponse(
-            reply=result["reply"],
+            reply=reply,
             agent_used=result["agent_used"],
             stage=result.get("router_ctx", {}).get("stage"),
         )
 
+    except HTTPException:
+        raise
     except Exception as e:
         logger.exception(
             "Erro ao processar mensagem | company_id=%s | phone=%s",
@@ -204,6 +283,7 @@ async def pop_from_history(req: PopMessagesRequest):
         key = _key(req.company_id, req.client_phone)
         for _ in range(req.count):
             await r.rpop(key)
+        await delete_summary_state(req.company_id, req.client_phone)
         logger.info(
             "Removidas %d mensagem(ns) do Redis | company_id=%s | phone=%s",
             req.count,

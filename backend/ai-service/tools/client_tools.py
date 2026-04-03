@@ -6,13 +6,39 @@ import redis as sync_redis
 
 from config import REDIS_HOST, REDIS_PORT, REDIS_PASSWORD
 from db import get_connection
-from tools.booking_tools import _extract_double_pair_id
+from memory.tool_result_cache import (
+    cache_get_client_pets,
+    cache_invalidate_client_pets,
+    cache_set_client_pets,
+)
+from tools.booking_tools import _effective_service_duration_minutes, _extract_double_pair_id
 from tools.slot_time_utils import hhmm_after_minutes, slot_time_to_hhmm
 
 logger = logging.getLogger("ai-service.tools.client")
 
 PET_SIZE_GATE_PREFIX = "pet_size_gate"
 PET_SIZE_GATE_TTL_SEC = 7200
+
+
+def fetch_client_pets_snapshot(company_id: int, client_id: str) -> dict | None:
+    """Executa a mesma leitura de get_client_pets sem passar pelo loop de tools."""
+    if not client_id or not str(client_id).strip():
+        return None
+    with get_connection() as conn:
+        cur = conn.cursor()
+        cur.execute(
+            """
+            SELECT id, name, species, breed, size, weight_kg, gender
+            FROM petshop_pets
+            WHERE company_id = %s AND client_id = %s AND is_active = TRUE
+            ORDER BY name
+        """,
+            (company_id, client_id),
+        )
+        pets = cur.fetchall()
+    out = {"pets": [dict(p) for p in pets], "count": len(pets)}
+    cache_set_client_pets(company_id, str(client_id), out)
+    return out
 
 
 def _pet_size_gate_key(company_id: int, client_id: str, pet_name: str) -> str:
@@ -234,13 +260,19 @@ def _pet_display_name_error(name: str) -> str | None:
 
 
 def _price_key_from_db_size(size_db: str) -> str | None:
-    return {"P": "small", "M": "medium", "G": "large", "GG": "large"}.get(size_db)
+    return {"P": "small", "M": "medium", "G": "large", "GG": "xlarge"}.get(size_db)
 
 
 def _porte_label_for_key(price_key: str | None) -> str | None:
     if not price_key:
         return None
-    return {"small": "pequeno", "medium": "médio", "large": "grande"}.get(price_key)
+    return {
+        "small": "pequeno",
+        "medium": "médio",
+        "large": "grande",
+        "xlarge": "extra grande",
+        "extra_large": "extra grande",
+    }.get(price_key)
 
 
 def _services_pricing_snapshot(cur, company_id: int, size_db: str) -> str:
@@ -325,6 +357,16 @@ def _merge_upcoming_appointment_rows(rows: list) -> list:
     Une pares __DOUBLE_PAIR__ em um único item com faixa de horário,
     para o agente não confundir dois registros (ex.: 15h e 16h) com dois serviços.
     """
+
+    def _eff_from_row(row: dict) -> int:
+        return _effective_service_duration_minutes(
+            {
+                "duration_min": row.get("duration_min"),
+                "duration_multiplier_large": row.get("duration_multiplier_large"),
+            },
+            {"size": row.get("pet_size")},
+        )
+
     by_id = {str(r["id"]): r for r in rows}
     consumed: set[str] = set()
     out: list = []
@@ -342,11 +384,11 @@ def _merge_upcoming_appointment_rows(rows: list) -> list:
             consumed.add(str(partner["id"]))
             t_a = slot_time_to_hhmm(r.get("start_time_raw"))
             t_b = slot_time_to_hhmm(partner.get("start_time_raw"))
-            dur = int(r.get("duration_min") or 60)
             first, second = (r, partner) if t_a <= t_b else (partner, r)
             t1 = slot_time_to_hhmm(first.get("start_time_raw"))
             t2 = slot_time_to_hhmm(second.get("start_time_raw"))
-            end_br = hhmm_after_minutes(t2, dur)
+            dur_eff = _eff_from_row(first)
+            end_br = hhmm_after_minutes(t1, dur_eff)
             out.append(
                 {
                     "id": str(first["id"]),
@@ -358,12 +400,13 @@ def _merge_upcoming_appointment_rows(rows: list) -> list:
                     "start_time": t1,
                     "second_slot_start": t2,
                     "service_end_time": end_br,
+                    "service_duration_minutes": dur_eff,
                     "uses_double_slot": True,
                 }
             )
             continue
         st = slot_time_to_hhmm(r.get("start_time_raw"))
-        dur = int(r.get("duration_min") or 60)
+        dur_eff = _eff_from_row(r)
         out.append(
             {
                 "id": rid,
@@ -372,11 +415,49 @@ def _merge_upcoming_appointment_rows(rows: list) -> list:
                 "service_name": r.get("service_name"),
                 "pet_name": r.get("pet_name"),
                 "start_time": st,
-                "service_end_time": hhmm_after_minutes(st, dur) if st else None,
+                "service_end_time": hhmm_after_minutes(st, dur_eff) if st else None,
+                "service_duration_minutes": dur_eff,
                 "uses_double_slot": False,
             }
         )
     return out
+
+
+def fetch_upcoming_appointments_snapshot(company_id: int, client_id: str) -> list | None:
+    """Executa a mesma leitura de get_upcoming_appointments sem tool calling."""
+    if not client_id or not str(client_id).strip():
+        return None
+    with get_connection() as conn:
+        cur = conn.cursor()
+        cur.execute(
+            """
+            SELECT
+                a.id,
+                a.scheduled_date,
+                a.status,
+                a.notes,
+                COALESCE(sl.slot_time, sch.start_time) AS start_time_raw,
+                svc.name AS service_name,
+                COALESCE(svc.duration_min, 60) AS duration_min,
+                svc.duration_multiplier_large,
+                p.size AS pet_size,
+                p.name AS pet_name
+            FROM petshop_appointments a
+            JOIN petshop_services svc ON svc.id = a.service_id
+            JOIN petshop_pets p ON p.id = a.pet_id
+            LEFT JOIN petshop_slots sl ON sl.id = a.slot_id
+            LEFT JOIN petshop_schedules sch ON sch.id = a.schedule_id
+            WHERE a.company_id = %s
+              AND a.client_id = %s
+              AND a.status IN ('pending', 'confirmed')
+              AND a.scheduled_date >= CURRENT_DATE
+            ORDER BY a.scheduled_date,
+                COALESCE(sl.slot_time, sch.start_time) NULLS LAST
+        """,
+            (company_id, client_id),
+        )
+        rows = [dict(r) for r in cur.fetchall()]
+    return _merge_upcoming_appointment_rows(rows)
 
 
 def build_client_tools(company_id: int, client_id: str) -> list:
@@ -388,50 +469,28 @@ def build_client_tools(company_id: int, client_id: str) -> list:
     def get_client_pets() -> dict:
         """
         Lista os pets ativos do cliente.
-        Chamar SEMPRE antes de cadastrar um pet para evitar duplicatas.
+        Use para validar nome, UUID e porte antes de cadastro ou agenda.
         """
-        with get_connection() as conn:
-            cur = conn.cursor()
-            cur.execute(
-                """
-                SELECT id, name, species, breed, size, weight_kg, gender
-                FROM petshop_pets
-                WHERE company_id = %s AND client_id = %s AND is_active = TRUE
-                ORDER BY name
-            """,
-                (company_id, client_id),
-            )
-            pets = cur.fetchall()
-        return {"pets": [dict(p) for p in pets], "count": len(pets)}
+        if client_id:
+            cached = cache_get_client_pets(company_id, str(client_id))
+            if cached is not None:
+                return {**cached, "from_cache": True}
+        return fetch_client_pets_snapshot(company_id, str(client_id)) or {"pets": [], "count": 0}
 
     def create_pet(name: str, species: str, breed: str, size: str) -> dict:
         """
         Cadastra um novo pet para o cliente.
-        TODOS os 4 campos são OBRIGATÓRIOS — incluindo o porte.
-        O porte DEVE ter sido perguntado e informado EXPLICITAMENTE pelo cliente.
-        NUNCA deduza o porte pela raça — sempre pergunte antes de chamar esta tool.
-
-        **Obrigatório:** antes de `create_pet`, chame **set_pet_size** com o **mesmo nome** do pet e o porte que o
-        **cliente disse**. Sem isso, `create_pet` é **rejeitado** pelo sistema (evita porte inventado pela IA).
-        O `size` passado em `create_pet` deve ser **idêntico** ao confirmado em `set_pet_size`.
-
-        ATENÇÃO — RAÇA NÃO É NOME:
-        Raças são palavras como: "Bull Terrier", "Golden Retriever", "Labrador", "Poodle",
-        "Shih Tzu", "Yorkshire", "Bulldog", "Beagle", "Dachshund", "Husky", "Pastor Alemão",
-        "Lhasa Apso", "Maltês", "Rottweiler", "Chihuahua", "Pug", "Dobermann", "Sem raça definida" etc.
-        Se o cliente mencionar apenas uma raça, NÃO use a raça como nome — pergunte qual é
-        o nome/apelido do pet antes de prosseguir. O nome é o apelido dado pelo dono
-        (ex: "Rex", "Bolinha", "Max", "Luna", "Mel", "Toby").
-
-        PROIBIDO inventar dados: nome genérico (gato, cachorro 1), raça "Sem raça definida"
-        sem o cliente ter dito que não sabe, ou porte padrão — o sistema rejeita nomes inválidos.
+        Regras curtas:
+        - exige nome, espécie, raça e porte
+        - chame set_pet_size antes, com o mesmo nome e porte
+        - não invente dados nem use raça como nome
+        - use só cachorro ou gato em species
 
         Args:
-            name: Nome/apelido do pet dado pelo dono (NÃO pode ser uma raça)
-            species: Espécie — 'cachorro' ou 'gato'
-            breed: Raça real (ex.: Persa, Labrador, SRD) — **não** use só "gato" ou "cachorro" como raça;
-                   'Sem raça definida' somente se o cliente disser explicitamente que não sabe (a API rejeita raça = espécie).
-            size: Porte — 'P', 'M', 'G' ou 'GG' (DEVE ter sido PERGUNTADO ao cliente)
+            name: Apelido real do pet
+            species: 'cachorro' ou 'gato'
+            breed: Raça real, ou "Sem raça definida" só se o cliente disser
+            size: Porte confirmado ('P', 'M', 'G' ou 'GG')
         """
         missing = []
         if not name or not name.strip():
@@ -581,6 +640,7 @@ def build_client_tools(company_id: int, client_id: str) -> list:
 
         _pet_size_gate_delete(company_id, client_id, name_key)
 
+        cache_invalidate_client_pets(company_id, str(client_id))
         return {
             "success": True,
             "pet_id": str(pet_id),
@@ -592,8 +652,8 @@ def build_client_tools(company_id: int, client_id: str) -> list:
         Confirma e registra o porte do pet informado pelo cliente.
         Use esta tool SEMPRE que o cliente informar o porte — tanto para pets já cadastrados quanto para pets ainda não cadastrados.
 
-        - Se o pet já existe no banco → atualiza o porte
-        - Se o pet ainda não foi cadastrado → retorna o porte confirmado para uso em create_pet e nos preços
+        - Se o pet já existe no banco (nome **igual** ao cadastro, sem diferenciar maiúsculas) → atualiza o porte
+        - Se o pet ainda não foi cadastrado → retorna o porte confirmado para uso em create_pet e nos preços (gate Redis); **não** atualiza outro pet por nome diferente — com um único pet cadastrado e nome que não bate, a resposta pode trazer `disambiguation` para você perguntar ao cliente se é esse pet ou um novo
 
         O porte confirmado por esta tool define o preço dos serviços.
         NUNCA deduza o porte pela raça — sempre pergunte ao cliente primeiro.
@@ -640,6 +700,7 @@ def build_client_tools(company_id: int, client_id: str) -> list:
         size_label = {"P": "pequeno", "M": "médio", "G": "grande", "GG": "extra grande"}.get(size_db, size)
 
         updated = None
+        single_registered_pet_name: str | None = None
         services_pricing_for_reply = ""
         with get_connection() as conn:
             cur = conn.cursor()
@@ -655,26 +716,22 @@ def build_client_tools(company_id: int, client_id: str) -> list:
                     (size_db, company_id, client_id, pet_name),
                 )
                 updated = cur.fetchone()
-            if not updated and client_id:
+            if (
+                not updated
+                and client_id
+                and pet_name
+                and pet_name.strip()
+            ):
                 cur.execute(
                     """
-                    SELECT id FROM petshop_pets
+                    SELECT name FROM petshop_pets
                     WHERE company_id = %s AND client_id = %s AND is_active = TRUE
                     """,
                     (company_id, client_id),
                 )
-                pet_rows = cur.fetchall()
-                if len(pet_rows) == 1:
-                    cur.execute(
-                        """
-                        UPDATE petshop_pets
-                        SET size = %s
-                        WHERE id = %s AND company_id = %s AND client_id = %s AND is_active = TRUE
-                        RETURNING id, name
-                        """,
-                        (size_db, pet_rows[0]["id"], company_id, client_id),
-                    )
-                    updated = cur.fetchone()
+                name_rows = cur.fetchall()
+                if len(name_rows) == 1:
+                    single_registered_pet_name = (name_rows[0].get("name") or "").strip() or None
             services_pricing_for_reply = _services_pricing_snapshot(cur, company_id, size_db)
 
         if not updated and pet_name and pet_name.strip():
@@ -692,16 +749,32 @@ def build_client_tools(company_id: int, client_id: str) -> list:
             _pet_size_gate_set(company_id, client_id, pet_name.strip(), size_db)
 
         if updated:
+            cache_invalidate_client_pets(company_id, str(client_id))
             return {
                 **base_out,
                 "pet_updated": True,
                 "message": f"Porte de {updated['name']} confirmado como {size_label}!",
             }
-        return {
+        out_new = {
             **base_out,
             "pet_updated": False,
             "message": f"Porte confirmado: {size_label}. Use este porte ao cadastrar o pet e para calcular preços.",
         }
+        if (
+            single_registered_pet_name
+            and pet_name
+            and pet_name.strip()
+            and single_registered_pet_name.lower() != pet_name.strip().lower()
+        ):
+            out_new["disambiguation"] = {
+                "only_registered_pet_name": single_registered_pet_name,
+                "hint": (
+                    f"O cliente tem só um pet cadastrado («{single_registered_pet_name}»), mas o nome passado "
+                    f"na tool («{pet_name.strip()}») não bate. Pergunte se é esse pet (typo/apelido) ou um pet novo "
+                    "antes de seguir; não atualize o porte do cadastro sem nome correto ou confirmação explícita."
+                ),
+            }
+        return out_new
 
     VALID_STAGES = {"initial", "onboarding", "pet_registered", "booking", "completed"}
 
@@ -748,35 +821,7 @@ def build_client_tools(company_id: int, client_id: str) -> list:
 
     def get_upcoming_appointments() -> list:
         """Retorna os próximos agendamentos confirmados ou pendentes do cliente."""
-        with get_connection() as conn:
-            cur = conn.cursor()
-            cur.execute(
-                """
-                SELECT
-                    a.id,
-                    a.scheduled_date,
-                    a.status,
-                    a.notes,
-                    COALESCE(sl.slot_time, sch.start_time) AS start_time_raw,
-                    svc.name AS service_name,
-                    COALESCE(svc.duration_min, 60) AS duration_min,
-                    p.name AS pet_name
-                FROM petshop_appointments a
-                JOIN petshop_services svc ON svc.id = a.service_id
-                JOIN petshop_pets p ON p.id = a.pet_id
-                LEFT JOIN petshop_slots sl ON sl.id = a.slot_id
-                LEFT JOIN petshop_schedules sch ON sch.id = a.schedule_id
-                WHERE a.company_id = %s
-                  AND a.client_id = %s
-                  AND a.status IN ('pending', 'confirmed')
-                  AND a.scheduled_date >= CURRENT_DATE
-                ORDER BY a.scheduled_date,
-                    COALESCE(sl.slot_time, sch.start_time) NULLS LAST
-            """,
-                (company_id, client_id),
-            )
-            rows = [dict(r) for r in cur.fetchall()]
-        return _merge_upcoming_appointment_rows(rows)
+        return fetch_upcoming_appointments_snapshot(company_id, str(client_id)) or []
 
     return [
         get_client_pets,

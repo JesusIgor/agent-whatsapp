@@ -42,14 +42,10 @@ def build_lodging_tools(company_id: int, client_id, lodging_type: str = "hotel")
     def get_kennel_availability(checkin_date: str, checkout_date: str) -> dict:
         """
         Verifica vagas disponíveis no período de hospedagem.
-        Retorna opções por tipo de quarto (preços em `room_type_options`, com descrição/features por item).
-        **Preço:** em cada opção, `daily_rate` e `total_amount` / `total_amount_one_pet_stay` referem-se a **um pet**
-        no período (total = diária × `days`). Para mais de um pet, em geral multiplique por quantos pets terão
-        reserva separada — **salvo** se `description`/`features` desse tipo disser outra regra (pacote, desconto,
-        “falar com especialista”, etc.); nesse caso siga o texto cadastrado, não invente conta.
-        Em sucesso, inclui `standard_checkin_time` e `standard_checkout_time` (horários padrão do cadastro).
-        O campo `message` já menciona esses horários para hotel e creche.
-        Chamar SEMPRE que o cliente mencionar datas de check-in/check-out.
+        Regras:
+        - use quando houver check-in e checkout
+        - `room_type_options` traz valores e textos por tipo
+        - preços retornados valem para um pet, salvo regra explícita no cadastro
         """
         try:
             checkin = date.fromisoformat(checkin_date)

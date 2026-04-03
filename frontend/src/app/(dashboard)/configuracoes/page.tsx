@@ -884,7 +884,9 @@ function ServicosContent({
                           <p className="mt-0.5 text-xs text-[#727B8E] dark:text-[#8a94a6]">
                             {s.durationMin}min
                             {s.price ? ` · R$ ${Number(s.price).toFixed(2)}` : ""}
-                            {s.priceBySize ? ` · P:${s.priceBySize.small ?? "—"} M:${s.priceBySize.medium ?? "—"} G:${s.priceBySize.large ?? "—"}` : ""}
+                            {s.priceBySize
+                              ? ` · P:${s.priceBySize.small ?? "—"} M:${s.priceBySize.medium ?? "—"} G:${s.priceBySize.large ?? "—"} GG:${s.priceBySize.xlarge ?? "—"}`
+                              : ""}
                             {s.durationMultiplierLarge === 2 ? " · 2× G/GG" : ""}
                             {s.description ? ` · ${s.description}` : ""}
                           </p>
@@ -2698,6 +2700,7 @@ export default function ConfiguracoesPage() {
     price_small: "",
     price_medium: "",
     price_large: "",
+    price_xlarge: "",
     duration_multiplier_large: false,
     block_ai_schedule: false,
     dependent_service_id: "" as string | number,
@@ -2715,6 +2718,7 @@ export default function ConfiguracoesPage() {
     price_small: 0,
     price_medium: 0,
     price_large: 0,
+    price_xlarge: 0,
     duration_multiplier_large: false,
     block_ai_schedule: false,
     dependent_service_id: "" as string | number,
@@ -2724,6 +2728,7 @@ export default function ConfiguracoesPage() {
     price_small: "",
     price_medium: "",
     price_large: "",
+    price_xlarge: "",
   });
   const [creatingService, setCreatingService] = useState(false);
   const [updatingService, setUpdatingService] = useState(false);
@@ -2898,6 +2903,7 @@ export default function ConfiguracoesPage() {
       price_small: "",
       price_medium: "",
       price_large: "",
+      price_xlarge: "",
       duration_multiplier_large: false,
       block_ai_schedule: false,
       dependent_service_id: "",
@@ -2910,7 +2916,8 @@ export default function ConfiguracoesPage() {
         selectedService.priceBySize &&
         (selectedService.priceBySize.small ||
           selectedService.priceBySize.medium ||
-          selectedService.priceBySize.large)
+          selectedService.priceBySize.large ||
+          selectedService.priceBySize.xlarge)
       );
       setEditingData({
         name: selectedService.name,
@@ -2922,6 +2929,7 @@ export default function ConfiguracoesPage() {
         price_small: selectedService.priceBySize?.small?.toString() || "",
         price_medium: selectedService.priceBySize?.medium?.toString() || "",
         price_large: selectedService.priceBySize?.large?.toString() || "",
+        price_xlarge: selectedService.priceBySize?.xlarge?.toString() || "",
         duration_multiplier_large:
           selectedService.durationMultiplierLarge === 2,
         block_ai_schedule: selectedService.blockAiSchedule ?? false,
@@ -2966,6 +2974,9 @@ export default function ConfiguracoesPage() {
                 : undefined,
               large: editingData.price_large
                 ? parseFloat(editingData.price_large)
+                : undefined,
+              xlarge: editingData.price_xlarge
+                ? parseFloat(editingData.price_xlarge)
                 : undefined,
             }
           : null,
@@ -3030,6 +3041,7 @@ export default function ConfiguracoesPage() {
       price_small: 0,
       price_medium: 0,
       price_large: 0,
+      price_xlarge: 0,
       duration_multiplier_large: false,
       block_ai_schedule: false,
       dependent_service_id: "",
@@ -3039,6 +3051,7 @@ export default function ConfiguracoesPage() {
       price_small: "",
       price_medium: "",
       price_large: "",
+      price_xlarge: "",
     });
   };
 
@@ -3050,7 +3063,12 @@ export default function ConfiguracoesPage() {
   };
 
   const handlePriceChange = (
-    field: "price" | "price_small" | "price_medium" | "price_large",
+    field:
+      | "price"
+      | "price_small"
+      | "price_medium"
+      | "price_large"
+      | "price_xlarge",
     value: string,
   ) => {
     const masked = maskCurrency(value);
@@ -3114,6 +3132,7 @@ export default function ConfiguracoesPage() {
               small: newServiceData.price_small || undefined,
               medium: newServiceData.price_medium || undefined,
               large: newServiceData.price_large || undefined,
+              xlarge: newServiceData.price_xlarge || undefined,
             }
           : undefined,
         duration_multiplier_large: newServiceData.duration_multiplier_large
@@ -3329,7 +3348,7 @@ export default function ConfiguracoesPage() {
                 Preço varia por porte?
               </label>
               <p className="text-xs font-normal text-[#727B8E]">
-                Defina preços diferentes para P, M e G
+                Defina preços diferentes para P, M, G e GG
               </p>
             </div>
             <label
@@ -3365,7 +3384,7 @@ export default function ConfiguracoesPage() {
           )}
 
           {editingData.price_varies_by_size && (
-            <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
               <Input
                 label="Pequeno (P)"
                 type="number"
@@ -3395,6 +3414,17 @@ export default function ConfiguracoesPage() {
                 value={editingData.price_large}
                 onChange={(e) =>
                   handleEditingDataChange("price_large", e.target.value)
+                }
+                step="0.01"
+                min="0"
+              />
+              <Input
+                label="Gigante (GG)"
+                type="number"
+                placeholder="0.00"
+                value={editingData.price_xlarge}
+                onChange={(e) =>
+                  handleEditingDataChange("price_xlarge", e.target.value)
                 }
                 step="0.01"
                 min="0"
@@ -3593,7 +3623,7 @@ export default function ConfiguracoesPage() {
                 Preço varia por porte?
               </label>
               <p className="text-xs font-normal text-[#727B8E]">
-                Defina preços diferentes para P, M e G
+                Defina preços diferentes para P, M, G e GG
               </p>
             </div>
             <label
@@ -3626,7 +3656,7 @@ export default function ConfiguracoesPage() {
           )}
 
           {newServiceData.price_varies_by_size && (
-            <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
               <Input
                 label="Pequeno (P)"
                 placeholder="0,00"
@@ -3649,6 +3679,14 @@ export default function ConfiguracoesPage() {
                 value={priceDisplay.price_large}
                 onChange={(e) =>
                   handlePriceChange("price_large", e.target.value)
+                }
+              />
+              <Input
+                label="Gigante (GG)"
+                placeholder="0,00"
+                value={priceDisplay.price_xlarge}
+                onChange={(e) =>
+                  handlePriceChange("price_xlarge", e.target.value)
                 }
               />
             </div>
