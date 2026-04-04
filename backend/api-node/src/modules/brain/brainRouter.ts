@@ -2,6 +2,31 @@ import type { BrainChatMode, BrainMessage } from './brain.types'
 
 const OPENAI_URL = 'https://api.openai.com/v1/chat/completions'
 
+/**
+ * Respostas curtas do tipo “às 10”, “sim”, “pode ser” após o assistente listar horários
+ * não contêm palavras-chave de ação; sem isso o roteador manda para SQL e o agendamento quebra.
+ */
+export function inferActionFromSchedulingFollowUp(message: string, history: BrainMessage[]): boolean {
+  const t = message.trim()
+  if (t.length > 160) return false
+
+  const lastAssistant = [...history].reverse().find((m) => m.role === 'assistant' && (m.content ?? '').trim().length > 0)
+  if (!lastAssistant?.content) return false
+
+  const a = lastAssistant.content
+  const schedulingCue =
+    /hor[áa]rios?|\bvagas\b|dispon[ií]ve|dispon[ií]veis|\bagend|\bmarcar\b|\bslots?\b|escol(h|)a\s+um\s+hor|qual\s+hor/i.test(
+      a,
+    )
+  if (!schedulingCue) return false
+
+  return (
+    /^\s*(sim|confirmo|confirmar|pode\s+ser|é\s+esse|esse|essa|ok|fecha|fechado|isso|perfeito)\b/i.test(t) ||
+    /\b\d{1,2}\s*[:h]\s*\d{2}\b/i.test(t) ||
+    /\b\d{1,2}\s*h\b/i.test(t)
+  )
+}
+
 function compactHistory(history: BrainMessage[], max: number): BrainMessage[] {
   return history
     .filter((m) => m && typeof m.content === 'string')
@@ -46,6 +71,8 @@ export async function classifyBrainMode(params: {
   history: BrainMessage[]
   petshopName: string
 }): Promise<BrainChatMode> {
+  if (inferActionFromSchedulingFollowUp(params.message, params.history)) return 'action'
+
   const quick = heuristicBrainMode(params.message)
   if (quick) return quick
 

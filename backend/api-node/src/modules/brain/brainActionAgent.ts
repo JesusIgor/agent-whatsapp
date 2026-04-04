@@ -24,7 +24,7 @@ function tryParseStructuredUiPayload(toolOutput: string): string | null {
   if (!trimmed.startsWith('{')) return null
   try {
     const p = JSON.parse(trimmed) as { type?: string }
-    if (p.type === 'campaign_draft' || p.type === 'appointment_created') {
+    if (p.type === 'campaign_draft' || p.type === 'appointment_created' || p.type === 'appointment_draft') {
       return JSON.stringify(p)
     }
   } catch {
@@ -64,10 +64,12 @@ Você ajuda com operações: agendamento manual (buscar cliente, pets, serviços
 Regras:
 - Use as ferramentas; não invente UUIDs nem IDs numéricos. client_id e pet_id vêm de search_clients e get_client_pets_for_scheduling. service_id vem de list_active_services.
 - Telefone com DDI em dígitos (ex.: 5511999999999).
-- Antes de create_manual_appointment, chame get_available_times e use um slot_id retornado para aquela data.
+- Fluxo de agendamento: get_available_times com service_id e pet_id; ao fechar data/hora com o dono, prefira create_appointment_draft (cartão com botão de confirmar no painel). Só use create_manual_appointment se ele pedir para gravar na hora sem cartão.
+- O histórico do chat não guarda slot_id: se o dono disser só "às 10" ou "confirmo", use create_manual_appointment ou create_appointment_draft com scheduled_date + time (HH:MM) + service_id + pet_id — o servidor resolve o slot. Se tiver o slot_id da última chamada get_available_times na mesma conversa, pode enviá-lo.
 - Para campanha: use search_clients se precisar; create_campaign_draft pode listar até vários UUIDs no rascunho (o painel mostra todos para o dono escolher); o envio respeita o limite do plano (indicado no JSON).
 - Responda ao dono em português brasileiro, caloroso e objetivo. Não cite nomes internos das ferramentas.
-- Quando create_campaign_draft ou create_manual_appointment retornarem JSON com "type" campaign_draft ou appointment_created, copie esse objeto JSON inteiro (uma linha, sem markdown) ao final da sua mensagem, depois do texto amigável, para o painel exibir o cartão.`
+- Listagens de clientes: use apenas o campo manual_phone para mostrar telefone; se vier vazio, diga «Numero nao identificado»; nunca repasse o campo phone ao usuário como número de exibição.
+- Quando create_campaign_draft, create_appointment_draft ou create_manual_appointment retornarem JSON com "type" campaign_draft, appointment_draft ou appointment_created, copie esse objeto JSON inteiro (uma linha, sem markdown) ao final da sua mensagem, depois do texto amigável, para o painel exibir o cartão.`
 
   const messages: Array<
     | { role: 'system'; content: string }

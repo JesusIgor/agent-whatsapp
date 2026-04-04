@@ -3,6 +3,7 @@
  * Usadas por `brainActionAgent.ts` no chat do painel (modo action).
  */
 import { prisma } from '../../lib/prisma'
+import { BRAIN_MANUAL_PHONE_EMPTY_LABEL } from './brainManualPhoneLabel'
 import {
   resolveSecondBrainPlanLimits,
   SECOND_BRAIN_CAMPAIGN_DRAFT_MAX_TARGETS,
@@ -10,6 +11,43 @@ import {
 import { isUuidString, parseOptionalUuid } from '../../lib/uuidValidation'
 import { computeAvailableSlotsResponse } from '../appointments/availableSlotsQuery'
 import { createManualScheduleAppointment } from '../appointments/manualScheduleCore'
+
+/** Alinha rótulos de horário (tool, usuário, grade). */
+export function normalizeHhMm(input: string): string | null {
+  const t = input.trim().toLowerCase().replace(/\s+/g, '')
+  let h: number
+  let min = 0
+  const withColon = t.match(/^(\d{1,2}):(\d{2})$/)
+  const withH = t.match(/^(\d{1,2})h(\d{2})?$/)
+  if (withColon) {
+    h = Number.parseInt(withColon[1]!, 10)
+    min = Number.parseInt(withColon[2]!, 10)
+  } else if (withH) {
+    h = Number.parseInt(withH[1]!, 10)
+    min = withH[2] ? Number.parseInt(withH[2]!, 10) : 0
+  } else if (/^\d{1,2}$/.test(t)) {
+    h = Number.parseInt(t, 10)
+  } else {
+    return null
+  }
+  if (!Number.isFinite(h) || h < 0 || h > 23 || min < 0 || min > 59) return null
+  return `${String(h).padStart(2, '0')}:${String(min).padStart(2, '0')}`
+}
+
+async function resolveSlotIdFromAvailable(
+  companyId: number,
+  scheduledDateYmd: string,
+  serviceId: number,
+  petIdUuid: string | undefined,
+  timeRaw: string,
+): Promise<string | null> {
+  const want = normalizeHhMm(timeRaw)
+  if (!want) return null
+  const result = await computeAvailableSlotsResponse(companyId, scheduledDateYmd, serviceId, petIdUuid)
+  if ('error' in result) return null
+  const slot = result.available_slots.find((s) => normalizeHhMm(s.time) === want)
+  return slot?.slot_id ?? null
+}
 
 export const ACTION_BRAIN_TOOLS = [
   {
@@ -102,20 +140,50 @@ export const ACTION_BRAIN_TOOLS = [
   {
     type: 'function',
     function: {
+      name: 'create_appointment_draft',
+      description:
+        'Exibe cartão de confirmação no painel com botão para criar o agendamento. Use quando cliente, pet, serviço, data e horário estiverem definidos. O dono pode ajustar notas/data/hora no cartão antes de confirmar.',
+      parameters: {
+        type: 'object',
+        properties: {
+          client_id: { type: 'string' },
+          client_name: { type: 'string', description: 'Nome para exibição (opcional).' },
+          pet_id: { type: 'string' },
+          pet_name: { type: 'string' },
+          service_id: { type: 'number' },
+          service_name: { type: 'string' },
+          scheduled_date: { type: 'string', description: 'YYYY-MM-DD.' },
+          time: { type: 'string', description: 'Horário como na grade (ex.: 09:00 ou 14:30).' },
+          slot_id: {
+            type: 'string',
+            description: 'UUID do slot de get_available_times; se omitido ou inválido, resolve por data+serviço+time.',
+          },
+          notes: { type: 'string' },
+          uses_consecutive_slots: { type: 'boolean' },
+          paired_slot_time: { type: 'string' },
+        },
+        required: ['client_id', 'pet_id', 'service_id', 'scheduled_date', 'time'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
       name: 'create_manual_appointment',
       description:
-        'Cria agendamento na plataforma após confirmar slot com get_available_times. Retorna JSON type appointment_created.',
+        'Cria agendamento na hora (sem cartão). Preferir create_appointment_draft para o dono revisar. Se não tiver slot_id na conversa, passe time (HH:MM) com scheduled_date e service_id para o backend resolver o slot.',
       parameters: {
         type: 'object',
         properties: {
           client_id: { type: 'string' },
           pet_id: { type: 'string' },
           service_id: { type: 'number' },
-          slot_id: { type: 'string' },
+          slot_id: { type: 'string', description: 'UUID de get_available_times, se souber.' },
+          time: { type: 'string', description: 'HH:MM — use se o dono escolheu um horário da lista e você não tem o slot_id.' },
           scheduled_date: { type: 'string', description: 'YYYY-MM-DD (deve bater com a data do slot).' },
           notes: { type: 'string' },
         },
-        required: ['client_id', 'pet_id', 'service_id', 'slot_id', 'scheduled_date'],
+        required: ['client_id', 'pet_id', 'service_id', 'scheduled_date'],
       },
     },
   },
@@ -138,7 +206,7 @@ export async function executeActionBrainTool(name: string, args: Record<string, 
 
       const found = await prisma.client.findMany({
         where: { companyId, id: { in: client_ids } },
-        select: { id: true, name: true, phone: true },
+        select: { id: true, name: true, phone: true, manualPhone: true },
       })
 
       if (!found.length) return 'Nenhum cliente encontrado com os IDs fornecidos.'
@@ -148,6 +216,8 @@ export async function executeActionBrainTool(name: string, args: Record<string, 
         clients: found.map((c) => ({
           id: c.id,
           name: c.name ?? 'Cliente',
+          manual_phone: (c.manualPhone ?? '').trim() || BRAIN_MANUAL_PHONE_EMPTY_LABEL,
+          /** Canal WhatsApp (painel usa no envio; não exibir ao dono). */
           phone: c.phone,
         })),
         message: message_template,
@@ -170,7 +240,7 @@ export async function executeActionBrainTool(name: string, args: Record<string, 
           companyId,
           name: { contains: q, mode: 'insensitive' },
         },
-        select: { id: true, name: true, phone: true },
+        select: { id: true, name: true, manualPhone: true },
         take: 5,
       })
 
@@ -178,7 +248,11 @@ export async function executeActionBrainTool(name: string, args: Record<string, 
 
       return JSON.stringify({
         type: 'clients_found',
-        clients: data.map((c) => ({ id: c.id, name: c.name ?? '', phone: c.phone })),
+        clients: data.map((c) => ({
+          id: c.id,
+          name: c.name ?? '',
+          manual_phone: (c.manualPhone ?? '').trim() || BRAIN_MANUAL_PHONE_EMPTY_LABEL,
+        })),
       })
     }
 
@@ -192,16 +266,21 @@ export async function executeActionBrainTool(name: string, args: Record<string, 
             companyId,
             name: String(args.name ?? ''),
             phone,
+            manualPhone: phone,
             email: (typeof args.email === 'string' ? args.email.trim() : null) || null,
             source: 'manual',
             conversationStage: 'initial',
           },
-          select: { id: true, name: true, phone: true },
+          select: { id: true, name: true, manualPhone: true },
         })
 
         return JSON.stringify({
           type: 'client_created',
-          client: { id: data.id, name: data.name, phone: data.phone },
+          client: {
+            id: data.id,
+            name: data.name,
+            manual_phone: (data.manualPhone ?? '').trim() || BRAIN_MANUAL_PHONE_EMPTY_LABEL,
+          },
         })
       } catch (e: unknown) {
         const code = e && typeof e === 'object' && 'code' in e ? (e as { code?: string }).code : undefined
@@ -276,13 +355,93 @@ export async function executeActionBrainTool(name: string, args: Record<string, 
       })
     }
 
+    case 'create_appointment_draft': {
+      const scheduled_date = String(args.scheduled_date ?? '').trim()
+      const service_id = Number(args.service_id)
+      const timeRaw = String(args.time ?? '').trim()
+      const petRaw = String(args.pet_id ?? '').trim()
+      const clientRaw = String(args.client_id ?? '').trim()
+      const petUuid = parseOptionalUuid(petRaw)
+
+      if (!isUuidString(clientRaw)) {
+        return 'client_id inválido: use o UUID de search_clients.'
+      }
+      if (!petUuid) {
+        return 'pet_id inválido: use o UUID de get_client_pets_for_scheduling.'
+      }
+      if (!Number.isFinite(service_id)) {
+        return 'service_id inválido.'
+      }
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(scheduled_date)) {
+        return 'scheduled_date deve ser YYYY-MM-DD.'
+      }
+      const timeNorm = normalizeHhMm(timeRaw)
+      if (!timeNorm) {
+        return 'Informe time no formato HH:MM (ex.: 14:30).'
+      }
+
+      let slotId = String(args.slot_id ?? '').trim()
+      if (!isUuidString(slotId)) {
+        const resolved = await resolveSlotIdFromAvailable(companyId, scheduled_date, service_id, petUuid, timeRaw)
+        if (!resolved) {
+          return 'Não encontrei esse horário livre na grade para essa data/serviço/pet. Chame get_available_times de novo e use um horário listado.'
+        }
+        slotId = resolved
+      }
+
+      const slotProbe = await prisma.petshopSlot.findUnique({
+        where: { id: slotId },
+        select: { companyId: true, slotDate: true },
+      })
+      if (!slotProbe || slotProbe.companyId !== companyId) {
+        return 'Slot inválido para esta empresa.'
+      }
+
+      return JSON.stringify({
+        type: 'appointment_draft',
+        client_id: clientRaw,
+        client_name: args.client_name != null ? String(args.client_name) : undefined,
+        pet_id: petRaw,
+        pet_name: args.pet_name != null ? String(args.pet_name) : undefined,
+        service_id,
+        service_name: args.service_name != null ? String(args.service_name) : undefined,
+        slot_id: slotId,
+        scheduled_date,
+        time: timeNorm,
+        notes: args.notes == null || args.notes === '' ? null : String(args.notes),
+        uses_consecutive_slots: args.uses_consecutive_slots === true ? true : undefined,
+        paired_slot_time:
+          args.paired_slot_time != null && String(args.paired_slot_time).trim() !== ''
+            ? String(args.paired_slot_time).trim()
+            : undefined,
+      })
+    }
+
     case 'create_manual_appointment': {
+      const scheduled_date = String(args.scheduled_date ?? '').trim()
+      const service_id = Number(args.service_id)
+      const petRaw = args.pet_id != null && args.pet_id !== '' ? String(args.pet_id) : undefined
+      const petUuid = parseOptionalUuid(petRaw)
+      const timeRaw = args.time != null ? String(args.time).trim() : ''
+
+      let slotId = String(args.slot_id ?? '').trim()
+      if ((!slotId || !isUuidString(slotId)) && timeRaw && /^\d{4}-\d{2}-\d{2}$/.test(scheduled_date) && Number.isFinite(service_id)) {
+        const resolved = await resolveSlotIdFromAvailable(companyId, scheduled_date, service_id, petUuid, timeRaw)
+        if (resolved) slotId = resolved
+      }
+
+      if (!isUuidString(slotId)) {
+        return (
+          'Preciso do horário exato na grade: passe slot_id (UUID de get_available_times) ou time (HH:MM) com scheduled_date, service_id e pet_id para eu localizar o slot.'
+        )
+      }
+
       const out = await createManualScheduleAppointment(companyId, {
         client_id: String(args.client_id),
         pet_id: String(args.pet_id),
-        service_id: Number(args.service_id),
-        slot_id: String(args.slot_id),
-        scheduled_date: String(args.scheduled_date),
+        service_id,
+        slot_id: slotId,
+        scheduled_date,
         notes: args.notes == null || args.notes === '' ? null : String(args.notes),
       })
 

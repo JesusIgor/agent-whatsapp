@@ -2,7 +2,7 @@ import { runAnalyticsBrainChat } from '../../secondBrain'
 import { runBrainActionAgent } from './brainActionAgent'
 import { buildAlerts } from './brainAlerts'
 import { runBrainConverse } from './brainConverse'
-import { reserveSecondBrainDailyMessage } from './brainDailyUsage'
+import { getSecondBrainDailyUsage, reserveSecondBrainDailyMessage } from './brainDailyUsage'
 import { fetchBrainCompanyContext } from './brainLabels'
 import { getBrainOpenAiModel } from './brainModel'
 import {
@@ -37,12 +37,15 @@ export class BrainService {
       return { reply: SECOND_BRAIN_MESSAGE_PLAN_NOT_AVAILABLE, alerts }
     }
 
-    const allowedToday = await reserveSecondBrainDailyMessage(companyId, planLimits.dailyMessageLimit)
-    if (!allowedToday) {
+    const reserve = await reserveSecondBrainDailyMessage(companyId, planLimits.dailyMessageLimit)
+    if (!reserve.ok) {
       const alerts = await alertsPromise
       return {
         reply: secondBrainMessageDailyLimitReached(planLimits.dailyMessageLimit),
         alerts,
+        meta: {
+          brainDaily: { used: planLimits.dailyMessageLimit, limit: planLimits.dailyMessageLimit },
+        },
       }
     }
 
@@ -86,10 +89,29 @@ export class BrainService {
     }
 
     const alerts = await alertsPromise
+    const brainDaily =
+      reserve.used >= 0
+        ? { used: reserve.used, limit: planLimits.dailyMessageLimit }
+        : undefined
     return {
       reply: result.reply,
       alerts,
-      meta: { ...result.meta, mode },
+      meta: { ...result.meta, mode, ...(brainDaily ? { brainDaily } : {}) },
+    }
+  }
+
+  /** Uso diário atual (sem consumir mensagem) — painel / home. */
+  async dailyUsage(companyId: number): Promise<{ enabled: boolean; used: number; limit: number }> {
+    const ctx = await fetchBrainCompanyContext(companyId)
+    const planLimits = resolveSecondBrainPlanLimits(ctx.plan)
+    if (!planLimits.secondBrainEnabled) {
+      return { enabled: false, used: 0, limit: 0 }
+    }
+    const used = await getSecondBrainDailyUsage(companyId)
+    return {
+      enabled: true,
+      used: Math.min(used, planLimits.dailyMessageLimit),
+      limit: planLimits.dailyMessageLimit,
     }
   }
 }

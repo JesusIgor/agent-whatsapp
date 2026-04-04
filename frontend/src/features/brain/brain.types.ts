@@ -18,7 +18,19 @@ export interface BrainAlert {
 
 export type BrainChatMode = 'converse' | 'sql' | 'action'
 
+export interface BrainDailyUsageMeta {
+  used: number
+  limit: number
+}
+
 export interface BrainChatMeta {
   mode?: BrainChatMode
   sql?: string
+  brainDaily?: BrainDailyUsageMeta
+}
+
+export interface BrainDailyUsageResponse {
+  enabled: boolean
+  used: number
+  limit: number
 }

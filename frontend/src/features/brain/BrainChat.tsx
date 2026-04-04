@@ -7,6 +7,7 @@ import { ScrollIndicator } from '@/components/atoms/ScrollIndicator'
 import { getImage } from '@/assets/images'
 import { useBrain } from './useBrain'
 import type { BrainMessage } from './brain.types'
+import { AppointmentSchedulingDraft } from './AppointmentSchedulingDraft'
 import { CampaignDraft } from './CampaignDraft'
 
 interface Props {
@@ -85,6 +86,9 @@ function AssistantBubble({ msg }: { msg: BrainMessage }) {
             onClose={() => {}}
           />
         )}
+        {msg.structured?.type === 'appointment_draft' && (
+          <AppointmentSchedulingDraft draft={msg.structured} />
+        )}
         {msg.structured?.type === 'appointment_created' && (
           <div className="mt-3 rounded-xl border border-[#727B8E1A] bg-gray-50 px-4 py-3 text-xs dark:border-[#40485A] dark:bg-[#141518]">
             <p className="font-medium text-[#434A57] dark:text-[#f5f9fc]">Agendamento criado</p>
@@ -109,7 +113,7 @@ function AssistantBubble({ msg }: { msg: BrainMessage }) {
 }
 
 export function BrainChat({ userName, assistantName = 'AuZap' }: Props) {
-  const { messages, suggestions, loading, sendMessage, clear } = useBrain()
+  const { messages, suggestions, loading, sendMessage, clear, dailyUsage } = useBrain()
   const chatContainerRef = useRef<HTMLDivElement>(null)
   const hasMessages = messages.length > 0
   const firstName = userName.split(' ')[0]
@@ -186,6 +190,11 @@ export function BrainChat({ userName, assistantName = 'AuZap' }: Props) {
             disabled={loading}
             quickActionsPairs={brainPairs}
           />
+          {dailyUsage?.enabled && dailyUsage.limit > 0 && dailyUsage.used >= 0 && (
+            <p className="mx-auto mt-2 w-full max-w-[770px] text-center text-[11px] leading-tight text-[#727B8E] dark:text-[#6b7280]">
+              {Math.max(0, dailyUsage.limit - dailyUsage.used)} mensagens restantes hoje
+            </p>
+          )}
         </div>
 
         {hasMessages && (

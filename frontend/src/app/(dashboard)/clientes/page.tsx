@@ -184,6 +184,7 @@ function ClientsSidebar({
   onSearchClick,
   loading,
   error,
+  deletingCustomerId,
 }: {
   customers: Customer[];
   selectedId: string | null;
@@ -194,6 +195,7 @@ function ClientsSidebar({
   onSearchClick: () => void;
   loading?: boolean;
   error?: string | null;
+  deletingCustomerId?: string | null;
 }) {
   const filteredCustomers = customers.filter(
     (customer) =>
@@ -228,17 +230,22 @@ function ClientsSidebar({
                 <button
                   key={customer.id}
                   type="button"
+                  disabled={deletingCustomerId === customer.id}
                   onClick={() => onSelect(customer.id)}
                   className={`w-full p-3 border-b border-[#727B8E]/10 ${selectedId === customer.id ? "bg-[#F4F6F9]" : "bg-white"
-                    }`}
+                    } disabled:pointer-events-none disabled:opacity-70`}
                 >
                   <div className="relative w-[49px] h-[49px] mx-auto">
                     <div className="w-full h-full rounded-full bg-[#FAFAFA] border border-[#727B8E]/10 flex items-center justify-center">
-                      <span className="text-base font-medium text-[#434A57]">
-                        {getInitials(customer.name)}
-                      </span>
+                      {deletingCustomerId === customer.id ? (
+                        <Loader2 className="h-5 w-5 animate-spin text-[#1E62EC]" />
+                      ) : (
+                        <span className="text-base font-medium text-[#434A57]">
+                          {getInitials(customer.name)}
+                        </span>
+                      )}
                     </div>
-                    {customer.status === "ativo" && (
+                    {customer.status === "ativo" && deletingCustomerId !== customer.id && (
                       <div className="absolute bottom-0 right-0 w-2 h-2 bg-[#3DCA21] rounded-full border-2 border-white/10" />
                     )}
                   </div>
@@ -348,18 +355,23 @@ function ClientsSidebar({
             <motion.button
               key={customer.id}
               type="button"
+              disabled={deletingCustomerId === customer.id}
               onClick={() => onSelect(customer.id)}
               whileHover={{ backgroundColor: "rgba(244, 246, 249, 0.5)" }}
-              className={`w-full p-4 text-left border-b border-[#727B8E]/5 dark:border-[#40485A]/50 transition-colors ${selectedId === customer.id
+              className={`w-full p-4 text-left border-b border-[#727B8E]/5 dark:border-[#40485A]/50 transition-colors disabled:pointer-events-none disabled:opacity-70 ${selectedId === customer.id
                 ? "bg-[#F4F6F9] dark:bg-[#212225]"
                 : ""
                 }`}
             >
               <div className="flex items-center gap-3">
                 <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-[#1E62EC]/20">
-                  <span className="text-sm font-medium text-[#1E62EC]">
-                    {getInitials(customer.name)}
-                  </span>
+                  {deletingCustomerId === customer.id ? (
+                    <Loader2 className="h-5 w-5 animate-spin text-[#1E62EC]" />
+                  ) : (
+                    <span className="text-sm font-medium text-[#1E62EC]">
+                      {getInitials(customer.name)}
+                    </span>
+                  )}
                 </div>
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center justify-between gap-2">
@@ -538,14 +550,28 @@ function CustomerDetails({
     }
   };
 
+  const isDeletingCustomer = deletingCustomerId === customer.id;
+
   return (
     <motion.div
       key={customer.id}
       initial={{ opacity: 0 }}
       animate={{ opacity: 1 }}
       exit={{ opacity: 0 }}
-      className="flex flex-1 flex-col min-h-0"
+      className="relative flex flex-1 flex-col min-h-0"
     >
+      {isDeletingCustomer && (
+        <div
+          className="absolute inset-0 z-30 flex flex-col items-center justify-center gap-3 rounded-[inherit] bg-white/75 dark:bg-[#1A1B1D]/85 backdrop-blur-[2px]"
+          aria-live="polite"
+          aria-busy="true"
+        >
+          <Loader2 className="h-9 w-9 animate-spin text-[#1E62EC]" />
+          <p className="text-sm font-medium text-[#434A57] dark:text-[#f5f9fc]">
+            Excluindo cliente…
+          </p>
+        </div>
+      )}
       <div className="p-2 lg:p-4 border-b border-[#727B8E]/10 dark:border-[#40485A]">
         <div className="flex items-center gap-1 lg:gap-3">
           <button
@@ -611,7 +637,6 @@ function CustomerDetails({
                     className="flex w-full items-center gap-2 px-4 py-2.5 text-sm text-red-500 hover:bg-[#F4F6F9] dark:hover:bg-[#212225] disabled:pointer-events-none disabled:opacity-60"
                     onClick={() => {
                       void onDeleteCustomer(customer.id);
-                      setMenuOpen(false);
                     }}
                   >
                     {deletingCustomerId === customer.id ? (
@@ -1819,6 +1844,7 @@ export default function ClientesPage() {
           }}
           loading={customersLoading}
           error={customersError}
+          deletingCustomerId={deletingCustomerId}
         />
       }
     >

@@ -1,6 +1,6 @@
 import { useState, useCallback, useEffect } from 'react'
-import { BrainMessage } from './brain.types'
-import { sendBrainMessage, fetchBrainSuggestions } from './brain.api'
+import type { BrainDailyUsageResponse, BrainMessage } from './brain.types'
+import { sendBrainMessage, fetchBrainSuggestions, fetchBrainUsage } from './brain.api'
 import { splitAssistantReply } from './parseAssistantStructured'
 
 /** Em HTTP (não-localhost), `crypto.randomUUID` costuma não existir; fallback evita quebra em produção. */
@@ -38,6 +38,21 @@ export function useBrain() {
   const [messages, setMessages] = useState<BrainMessage[]>([])
   const [loading, setLoading] = useState(false)
   const [suggestions, setSuggestions] = useState<string[]>(() => pickTwoRandom(FALLBACK_SUGGESTIONS))
+  const [dailyUsage, setDailyUsage] = useState<BrainDailyUsageResponse | null>(null)
+
+  useEffect(() => {
+    let cancelled = false
+    fetchBrainUsage()
+      .then((u) => {
+        if (!cancelled) setDailyUsage(u)
+      })
+      .catch(() => {
+        if (!cancelled) setDailyUsage(null)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [])
 
   useEffect(() => {
     let cancelled = false
@@ -65,6 +80,14 @@ export function useBrain() {
       const history = [...messages, userMsg].map(m => ({ role: m.role, content: m.content }))
       const result = await sendBrainMessage(text, history)
       const { displayText, structured } = splitAssistantReply(result.reply)
+
+      if (result.meta?.brainDaily) {
+        setDailyUsage({
+          enabled: true,
+          used: result.meta.brainDaily.used,
+          limit: result.meta.brainDaily.limit,
+        })
+      }
 
       setMessages(prev => [
         ...prev.slice(0, -1),
@@ -95,5 +118,5 @@ export function useBrain() {
       .catch(() => {})
   }, [])
 
-  return { messages, suggestions, loading, sendMessage, clear }
+  return { messages, suggestions, loading, sendMessage, clear, dailyUsage }
 }

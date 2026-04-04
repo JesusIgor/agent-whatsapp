@@ -48,7 +48,7 @@ Boas práticas:
 - Proibido SELECT *; colunas finais devem ser legíveis para o dono (nomes, valores, datas) — nunca exponha service_id, client_id, company_id na lista final se puder evitar (use JOIN e traga ps.name, c.name, etc.).
 - Ranking "serviço mais usado": JOIN petshop_services ps ON ps.id = pa.service_id AND ps.company_id = pa.company_id; SELECT ps.name, COUNT(*)::int AS total — não retorne só service_id.
 - Preço ou detalhe de um serviço pelo nome citado pelo usuário: filtre com ps.name ILIKE '%trecho%' (case insensitive); inclua price e price_by_size (json) quando existirem. Não use igualdade exata '=Banho Simples' se o cadastro puder variar maiúsculas.
-- Perguntas sobre conversas: JOIN agent_conversations com clients para clients.name e clients.phone.
+- Perguntas sobre conversas: JOIN agent_conversations com clients para clients.name; se precisar exibir telefone ao dono, use clients.manual_phone (rótulo amigável), não clients.phone (canal técnico). Se manual_phone for NULL/vazio, mostre «Numero nao identificado».
 - Agendamentos: scheduled_date em petshop_appointments (não existe appointment_date).
 - Ordene por data ou contagem quando fizer sentido (ORDER BY ... DESC).
 

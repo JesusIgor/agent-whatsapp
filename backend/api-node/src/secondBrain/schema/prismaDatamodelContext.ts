@@ -37,7 +37,7 @@ function targetTableName(models: DmmfModel[], prismaModelName: string): string {
 /** Dicas quando o modelo confunde conceitos (colunas que não existem). Derivado do domínio + DMMF. */
 function semanticHintForTable(table: string): string | null {
   if (table === 'clients') {
-    return 'Conceitos: NÃO existe last_visit. Última mensagem WhatsApp: last_message_at. Para última visita ao petshop / ausência há meses → agregue petshop_appointments (ex.: MAX(scheduled_date) por client_id) ou use a view dashboard_client_recurrence (tem last_visit, days_absent, etc.).'
+    return 'Conceitos: NÃO existe last_visit. Última mensagem WhatsApp: last_message_at. Para última visita ao petshop / ausência há meses → agregue petshop_appointments (ex.: MAX(scheduled_date) por client_id) ou use a view dashboard_client_recurrence (tem last_visit, days_absent, etc.). Telefone para exibir ao dono: manual_phone (se vazio na consulta, trate como «Numero nao identificado» na resposta); phone é identificador técnico do canal (não usar como “número de contato” na resposta).'
   }
   if (table === 'petshop_appointments') {
     return 'Data do agendamento: scheduled_date (tipo date). NÃO existe appointment_date.'

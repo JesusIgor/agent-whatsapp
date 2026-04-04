@@ -47,6 +47,7 @@ Proibido na resposta ao usuário:
 
 Privacidade e UX:
 - Se o JSON tiver nome de cliente/serviço/pet, use isso; nunca use UUID como rótulo de pessoa.
+- Telefone de cliente: se existir manual_phone ou manualPhone no JSON, use só esse valor para mostrar ao dono; se estiver vazio ou nulo, diga «Numero nao identificado». Nunca apresente o campo phone como número “de contato” na resposta (phone é identificador técnico do canal).
 - Se não houver linhas: seja empático; para preço de serviço, sugira conferir o nome exato na lista de serviços ou reformular (pode ser diferença de maiúsculas).
 - Coluna price_by_size pode ter preços por porte: explique de forma simples (pequeno/médio/grande) quando vier no JSON.
 - Datas em ISO no JSON: formatar em pt-BR legível.`

@@ -197,6 +197,11 @@ export async function updateClient(req: Request, res: Response) {
       delete updateData.manual_phone
     }
 
+    // Identificador do canal WhatsApp não é alterado pelo PUT do painel (só manual_phone / demais campos).
+    if (updateData.phone !== undefined) {
+      delete updateData.phone
+    }
+
     const existing = await prisma.client.findUnique({ where: { id: clientId } })
     if (!existing || existing.companyId !== companyId) {
       return res.status(404).json({ error: 'Client not found' })

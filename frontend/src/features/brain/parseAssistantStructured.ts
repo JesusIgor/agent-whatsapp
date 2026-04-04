@@ -1,8 +1,8 @@
-const UI_TYPES = new Set(['campaign_draft', 'appointment_created'])
+const UI_TYPES = new Set(['campaign_draft', 'appointment_created', 'appointment_draft'])
 
 export type CampaignDraftPayload = {
   type: 'campaign_draft'
-  clients: { id: string; name: string; phone: string }[]
+  clients: { id: string; name: string; manual_phone?: string; phone?: string }[]
   message: string
   total?: number
   /** Limite do plano para quantos destinatários podem ser marcados no envio. */
@@ -18,7 +18,23 @@ export type AppointmentCreatedPayload = {
   client_id?: string
 }
 
-export type BrainStructuredUi = CampaignDraftPayload | AppointmentCreatedPayload
+export type AppointmentDraftPayload = {
+  type: 'appointment_draft'
+  client_id: string
+  client_name?: string
+  pet_id: string
+  pet_name?: string
+  service_id: number
+  service_name?: string
+  slot_id: string
+  scheduled_date: string
+  time: string
+  notes?: string | null
+  uses_consecutive_slots?: boolean
+  paired_slot_time?: string
+}
+
+export type BrainStructuredUi = CampaignDraftPayload | AppointmentCreatedPayload | AppointmentDraftPayload
 
 /**
  * Extrai o primeiro JSON com `type` reconhecido para UI (campanha / agendamento criado).

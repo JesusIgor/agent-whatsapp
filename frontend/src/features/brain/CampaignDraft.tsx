@@ -1,11 +1,21 @@
 import { useEffect, useMemo, useState } from 'react'
 import { api } from '@/lib/api'
 import { BRAIN_CAMPAIGN_SEND_FALLBACK } from './brainLimits'
+import { MANUAL_PHONE_EMPTY_LABEL } from './brainManualPhoneLabel'
 
 interface Client {
   id: string
   name: string
-  phone: string
+  /** Exibição (manual_phone do cadastro). */
+  manual_phone?: string
+  /** Canal WhatsApp para envio — não exibir. */
+  phone?: string
+}
+
+function displayManualPhone(c: Client): string {
+  const m = c.manual_phone?.trim()
+  if (m) return m
+  return MANUAL_PHONE_EMPTY_LABEL
 }
 
 interface CampaignDraftProps {
@@ -74,11 +84,19 @@ export function CampaignDraft({ clients, message, maxRecipientsPerSend, onClose 
       setError('Selecione pelo menos um cliente.')
       return
     }
+    const payloadClients = selectedClients.map((c) => ({
+      id: c.id,
+      phone: (c.phone ?? '').trim(),
+    }))
+    if (payloadClients.some((x) => !x.phone)) {
+      setError('Cliente sem canal de envio. Recrie o rascunho ou verifique o cadastro.')
+      return
+    }
     setSending(true)
     setError(null)
     try {
       await api.post('/campaigns/send', {
-        clients: selectedClients.map((c) => ({ id: c.id, phone: c.phone })),
+        clients: payloadClients,
         message: draft,
       })
       setSent(true)
@@ -125,7 +143,7 @@ export function CampaignDraft({ clients, message, maxRecipientsPerSend, onClose 
               />
               <label htmlFor={`campaign-client-${c.id}`} className={`cursor-pointer ${disableCheck ? 'opacity-50' : ''}`}>
                 <span className="font-medium">{c.name}</span>
-                <span className="block text-[#727B8E] dark:text-[#8a94a6]">{c.phone}</span>
+                <span className="block text-[#727B8E] dark:text-[#8a94a6]">{displayManualPhone(c)}</span>
               </label>
             </li>
           )
