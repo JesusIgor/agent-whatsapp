@@ -9,7 +9,22 @@ export const SECOND_BRAIN_CAMPAIGN_DRAFT_MAX_TARGETS = 10
 // ─── Plano Pro (ajuste números aqui) ─────────────────────────────────────────
 
 /** Mensagens do usuário ao Second Brain por dia (contador por empresa; fuso em BRAIN_TIMEZONE). */
-export const SECOND_BRAIN_PRO_DAILY_MESSAGE_LIMIT = 10
+export const SECOND_BRAIN_PRO_DAILY_MESSAGE_LIMIT = 100
+
+/** Quantas mensagens (user+assistant) entram no contexto do agente de ações (agendamento, campanha, cancelamento). */
+export const BRAIN_ACTION_HISTORY_LIMIT = 100
+
+/** Idem modo conversa livre (sem ferramentas). */
+export const BRAIN_CONVERSE_HISTORY_LIMIT = 1000
+
+/** Idem classificador que escolhe sql vs action vs converse. */
+export const BRAIN_ROUTER_HISTORY_LIMIT = 8
+
+/** Máximo de itens por chamada às tools em lote (criar / remarcar / cancelar agendamentos). */
+export const BRAIN_BATCH_APPOINTMENTS_MAX = 10
+
+/** Máximo de agendamentos retornados em search_appointments. */
+export const BRAIN_SEARCH_APPOINTMENTS_MAX = 25
 
 /** Destinatários por clique em “Enviar campanha” no plano Pro. */
 export const SECOND_BRAIN_PRO_CAMPAIGN_SEND_MAX = 3

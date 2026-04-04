@@ -3,6 +3,7 @@ import { Prisma } from '@prisma/client'
 import { prisma } from '../../lib/prisma'
 import { isUuidString, parseOptionalUuid } from '../../lib/uuidValidation'
 import { computeAvailableSlotsResponse } from './availableSlotsQuery'
+import { cancelPetshopAppointment, extractDoublePairPartnerAppointmentId } from './appointmentCancelCore'
 import { createManualScheduleAppointment } from './manualScheduleCore'
 
 function petSizeNeedsLargeDurationMultiplier(
@@ -64,19 +65,6 @@ function mergeNotesWithDoublePair(
   const u = (userNotes ?? '').trim()
   const line = `${DOUBLE_PAIR_PREFIX}${partnerAppointmentId}`
   return u ? `${u}\n${line}` : line
-}
-
-function extractDoublePairAppointmentId(
-  notes: string | null | undefined,
-): string | null {
-  if (!notes) return null
-  const idx = notes.indexOf(DOUBLE_PAIR_PREFIX)
-  if (idx < 0) return null
-  const rest = notes.slice(idx + DOUBLE_PAIR_PREFIX.length).trim()
-  const m = rest.match(
-    /^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})/,
-  )
-  return m?.[1] ?? null
 }
 
 /** Há pelo menos um par de slots consecutivos livres neste dia para a especialidade. */
@@ -516,43 +504,12 @@ export async function cancelAppointment(req: Request, res: Response) {
     const id = req.params.id!
     const { cancel_reason } = req.body
 
-    const existing = await prisma.petshopAppointment.findUnique({ where: { id } })
-    if (!existing || existing.companyId !== companyId) {
-      return res.status(404).json({ error: 'Appointment not found' })
+    const result = await cancelPetshopAppointment(companyId, id, cancel_reason ?? null)
+    if (!result.ok) {
+      return res.status(404).json({ error: result.message })
     }
 
-    const now = new Date()
-    const partnerId = extractDoublePairAppointmentId(existing.notes)
-
-    await prisma.$transaction(async (tx) => {
-      await tx.petshopAppointment.update({
-        where: { id },
-        data: { status: 'cancelled', cancelledAt: now, cancelReason: cancel_reason ?? null, updatedAt: now },
-      })
-
-      if (partnerId) {
-        const partner = await tx.petshopAppointment.findUnique({
-          where: { id: partnerId },
-        })
-        if (
-          partner &&
-          partner.companyId === companyId &&
-          !['cancelled', 'no_show'].includes(partner.status)
-        ) {
-          await tx.petshopAppointment.update({
-            where: { id: partnerId },
-            data: {
-              status: 'cancelled',
-              cancelledAt: now,
-              cancelReason: cancel_reason ?? 'Cancelado em conjunto (dois horários)',
-              updatedAt: now,
-            },
-          })
-        }
-      }
-    })
-
-    res.json({ success: true, appointment_id: id, cancelled_at: now.toISOString() })
+    res.json({ success: true, appointment_id: result.appointment_id, cancelled_at: result.cancelled_at })
   } catch (error) {
     console.error('Error cancelling appointment:', error)
     res.status(500).json({ error: 'Failed to cancel appointment' })
@@ -571,7 +528,7 @@ export async function deleteAppointment(req: Request, res: Response) {
       return res.status(404).json({ error: 'Appointment not found' })
     }
 
-    const partnerId = extractDoublePairAppointmentId(existing.notes)
+    const partnerId = extractDoublePairPartnerAppointmentId(existing.notes)
 
     await prisma.$transaction(async (tx) => {
       await tx.petshopAppointment.delete({ where: { id } })

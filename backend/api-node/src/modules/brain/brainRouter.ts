@@ -1,3 +1,4 @@
+import { BRAIN_ROUTER_HISTORY_LIMIT } from './brainPlanConstants'
 import type { BrainChatMode, BrainMessage } from './brain.types'
 
 const OPENAI_URL = 'https://api.openai.com/v1/chat/completions'
@@ -46,7 +47,7 @@ export function heuristicBrainMode(message: string): BrainChatMode | null {
       t,
     )
   const asksAction =
-    /\b(agendar|agendamento|marcar|horário|horarios|disponível|disponiveis|vagas|slot|campanha|cadastrar cliente|criar cliente|novo cliente|reativação|reativacao|mensagem em massa|draft de campanha|horários livres|horarios livres)\b/i.test(
+    /\b(agendar|agendamento|marcar|cancelar|desmarcar|cancelamento|remarcar|reagendar|em lote|vários agend|varios agend|lista(r)? agend|horário|horarios|disponível|disponiveis|vagas|slot|campanha|cadastrar cliente|criar cliente|novo cliente|reativação|reativacao|mensagem em massa|draft de campanha|horários livres|horarios livres)\b/i.test(
       t,
     )
 
@@ -76,7 +77,7 @@ export async function classifyBrainMode(params: {
   const quick = heuristicBrainMode(params.message)
   if (quick) return quick
 
-  const hist = compactHistory(params.history, 8)
+  const hist = compactHistory(params.history, BRAIN_ROUTER_HISTORY_LIMIT)
   const histText = hist.map((m) => `${m.role}: ${m.content}`).join('\n')
 
   const system = `Classifique a intenção da última mensagem do dono do petshop "${params.petshopName}" no painel.
@@ -85,7 +86,7 @@ Responda só com JSON: {"mode":"converse"|"sql"|"action"}
 
 - converse: cumprimentos, agradecimentos, despedidas, conversa social, meta ("o que você faz?", "como funciona?"), opinião sem pedir número nem ação no sistema.
 - sql: perguntas de dados em leitura — quantos/quem/quanto, listagens, relatórios, faturamento, histórico de clientes/agenda/conversas, estatísticas, rankings. Tudo que exige consultar o banco em SELECT.
-- action: operações — agendar manualmente, ver horários livres, criar cliente, buscar cliente para marcar, campanha de reativação, rascunho de mensagem para vários clientes. Qualquer fluxo que use ferramentas de agendamento ou campanha.
+- action: operações — agendar manualmente (um ou vários), cancelar ou remarcar agendamentos (um ou em lote), listar agendamentos, ver horários livres, criar cliente, buscar cliente para marcar, campanha de reativação, rascunho de mensagem para vários clientes. Qualquer fluxo que use ferramentas de agendamento ou campanha.
 
 Se a mensagem misturar relatório + agendar, prefira action se o foco imediato for agendar; prefira sql se for só análise de dados.`
 

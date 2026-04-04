@@ -1,10 +1,8 @@
-﻿/**
+/**
  * Allowlist de relações (tabelas/views) para Text-to-SQL.
  * Sincronizar com Prisma @@map e migrations de views.
  */
 export const ALLOWED_RELATIONS = new Set<string>([
-  'saas_companies',
-  'saas_users',
   'petshop_profile',
   'clients',
   'whatsapp_sessions',

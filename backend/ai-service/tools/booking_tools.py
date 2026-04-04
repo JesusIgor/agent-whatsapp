@@ -4,6 +4,8 @@ import re
 import urllib.request
 import json
 from datetime import date, datetime, timedelta
+
+from config import API_NODE_URL, INTERNAL_API_KEY
 from db import get_connection
 from memory.tool_result_cache import cache_get_services, cache_set_services
 from timezone_br import now_sao_paulo_naive, today_sao_paulo
@@ -177,9 +179,6 @@ def fetch_services_snapshot(company_id: int) -> dict:
         "lodging_offerings_count": len(lodging_offerings),
     }
 
-
-# URL interna do backend Node (Docker network)
-BACKEND_INTERNAL_URL = os.getenv("BACKEND_INTERNAL_URL", "http://backend:3000")
 
 # Deve coincidir com MAX_DAYS_AHEAD no backend Node (geração de slots / agenda).
 MAX_AGENDA_DAYS_AHEAD = 90
@@ -516,13 +515,14 @@ def build_booking_tools(company_id: int, client_id) -> list:
     def _try_generate_slots() -> bool:
         """Tenta gerar slots via endpoint interno. Retorna True se bem-sucedido."""
         try:
-            url = f"{BACKEND_INTERNAL_URL}/internal/generate-slots"
+            url = f"{API_NODE_URL.rstrip('/')}/internal/generate-slots"
             payload = json.dumps(
                 {"company_id": company_id, "days": MAX_AGENDA_DAYS_AHEAD}
             ).encode()
-            req = urllib.request.Request(
-                url, data=payload, headers={"Content-Type": "application/json"}
-            )
+            headers = {"Content-Type": "application/json"}
+            if INTERNAL_API_KEY:
+                headers["X-Internal-Key"] = INTERNAL_API_KEY
+            req = urllib.request.Request(url, data=payload, headers=headers)
             with urllib.request.urlopen(req, timeout=15) as resp:
                 result = json.loads(resp.read())
                 logger.info("Fallback generate-slots: %s", result)

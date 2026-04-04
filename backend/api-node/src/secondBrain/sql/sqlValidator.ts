@@ -1,5 +1,8 @@
+import { Parser } from 'node-sql-parser'
+import type { Select } from 'node-sql-parser'
 import { ALLOWED_RELATIONS } from '../schema/allowedRelations'
 import type { SqlValidationResult } from '../types'
+import { validateAstTenantPolicy } from './sqlTenantAst'
 
 const FORBIDDEN = /\b(INSERT|UPDATE|DELETE|DROP|TRUNCATE|ALTER|CREATE|GRANT|REVOKE|COPY|EXECUTE|CALL|PG_SLEEP|LO_|VERSION\s*\(|INTO\s+OUTFILE)\b/i
 
@@ -52,13 +55,28 @@ export function validatePetshopReadOnlySql(sql: string, companyId: number, maxLi
       message: 'Não use SELECT *; liste apenas as colunas necessárias (facilita respostas claras e evita vazar campos internos).',
     }
   }
-  const tenantRe = new RegExp(`company_id\\s*=\\s*${companyId}(?!\\d)`, 'i')
-  if (!tenantRe.test(s)) {
+
+  let ast: unknown
+  try {
+    const parser = new Parser()
+    const parsed = parser.parse(s, { database: 'postgresql' })
+    ast = parsed.ast
+  } catch {
     return {
       ok: false,
-      code: 'TENANT',
-      message: `A query deve filtrar explicitamente company_id = ${companyId}.`,
+      code: 'PARSE',
+      message: 'SQL inválida ou sintaxe não suportada pelo validador de segurança.',
     }
+  }
+  if (Array.isArray(ast)) {
+    return { ok: false, code: 'MULTI', message: 'Apenas uma instrução SQL é permitida.' }
+  }
+  if (!ast || typeof ast !== 'object' || (ast as { type?: string }).type !== 'select') {
+    return { ok: false, code: 'NOT_SELECT', message: 'Apenas consultas SELECT (ou WITH ... SELECT) são permitidas.' }
+  }
+  const tenantAst = validateAstTenantPolicy(ast as Select, companyId, ALLOWED_RELATIONS)
+  if (!tenantAst.ok) {
+    return { ok: false, code: 'TENANT', message: tenantAst.message }
   }
   const limitVal = parseLimit(s)
   if (limitVal === null) {

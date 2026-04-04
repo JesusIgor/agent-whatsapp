@@ -39,16 +39,18 @@ function slotDateKey(slotDate: Date): string {
 }
 
 /** Mesmo pet não pode ter dois atendimentos ativos com início no mesmo slot (data+hora da grade). Outros pets do mesmo dono podem se o slot tiver vaga. */
-async function petAppointmentConflictSameSlot(
+export async function petAppointmentConflictSameSlot(
   companyId: number,
   petId: string,
   slotDate: Date,
   slotTime: Date,
+  excludeAppointmentIds: string[] = [],
 ): Promise<string | null> {
   const existing = await prisma.petshopAppointment.findFirst({
     where: {
       companyId,
       petId,
+      ...(excludeAppointmentIds.length ? { id: { notIn: excludeAppointmentIds } } : {}),
       status: { notIn: ['completed', 'cancelled'] },
       slotId: { not: null },
       slot: { slotDate, slotTime },
@@ -108,11 +110,17 @@ export async function createManualScheduleAppointment(
     prisma.petshopService.findFirst({
       where: { id: Number(service_id), companyId },
     }),
-    prisma.petshopPet.findFirst({ where: { id: pid, companyId } }),
+    prisma.petshopPet.findFirst({ where: { id: pid, companyId, clientId: cid } }),
   ])
 
   if (!service) return { ok: false, message: 'Serviço não encontrado.' }
-  if (!pet) return { ok: false, message: 'Pet não encontrado.' }
+  if (!pet) {
+    return {
+      ok: false,
+      message:
+        'Pet não encontrado para este cliente. Confira se o pet_id é o UUID do animal deste dono (cadastro do petshop).',
+    }
+  }
 
   const slot = await prisma.petshopSlot.findUnique({ where: { id: sid } })
   if (!slot || slot.companyId !== companyId) {

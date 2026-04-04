@@ -1,5 +1,6 @@
 import { getBrainDateContextPromptLine } from '../../secondBrain/clockContext'
 import { sanitizeAssistantHistoryContent, sanitizeUserFacingReply } from '../../secondBrain/sanitize'
+import { BRAIN_CONVERSE_HISTORY_LIMIT } from './brainPlanConstants'
 import type { BrainMessage } from './brain.types'
 
 const OPENAI_URL = 'https://api.openai.com/v1/chat/completions'
@@ -24,7 +25,7 @@ export async function runBrainConverse(params: {
   message: string
   history: BrainMessage[]
 }): Promise<{ reply: string }> {
-  const prior = toMessages(params.history, 10)
+  const prior = toMessages(params.history, BRAIN_CONVERSE_HISTORY_LIMIT)
   const system = `Você é ${params.assistantName}, assistente do petshop ${params.petshopName} no painel do dono.
 ${getBrainDateContextPromptLine()}
 Responda em português brasileiro, de forma breve, calorosa e natural.
