@@ -5,7 +5,8 @@ export interface BrainMessage {
   content: string
   id: string
   loading?: boolean
-  structured?: BrainStructuredUi
+  /** Um cartão ou vários (ex.: cancelamento em lote + rascunho de campanha). */
+  structured?: BrainStructuredUi | BrainStructuredUi[]
   /** SQL executada no backend (somente leitura), quando exposta pela API */
   sqlExecuted?: string
 }

@@ -941,6 +941,7 @@ function CustomerDetails({
           <div>
             <Select
               label="Espécie *"
+              placeholder="Selecione uma opção"
               value={petForm.species}
               onChange={(e) => {
                 setPetForm((prev) => ({ ...prev, species: e.target.value }));

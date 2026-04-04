@@ -17,8 +17,6 @@ import {
   normalizeHhMm,
   resolveSlotIdFromDateTimeServicePet,
 } from '../appointments/appointmentSlotResolve'
-import { rescheduleManualAppointment } from '../appointments/appointmentRescheduleCore'
-import { createManualScheduleAppointment } from '../appointments/manualScheduleCore'
 
 export { normalizeHhMm }
 
@@ -148,11 +146,26 @@ function formatUtcHhMm(d: Date): string {
   return `${String(d.getUTCHours()).padStart(2, '0')}:${String(d.getUTCMinutes()).padStart(2, '0')}`
 }
 
-async function brainCreateManualOne(
+type ManualScheduleItemPayload = {
+  client_id: string
+  client_name?: string
+  pet_id: string
+  pet_name: string
+  service_id: number
+  service_name: string
+  slot_id: string
+  scheduled_date: string
+  time: string
+  scheduled_at: string
+  notes: string | null
+}
+
+/** Resolve slot e identidades; não grava agendamento (confirmação é no painel). */
+async function brainResolveManualScheduleItem(
   companyId: number,
   raw: Record<string, unknown>,
-): Promise<{ ok: true; appointment_id: string; scheduled_date: string } | { ok: false; message: string }> {
-  const scheduled_date = String(raw.scheduled_date ?? '').trim()
+): Promise<{ ok: true; item: ManualScheduleItemPayload } | { ok: false; message: string }> {
+  let scheduled_date = String(raw.scheduled_date ?? '').trim()
   const clientRawManual = String(raw.client_id ?? '').trim()
   const timeRaw = raw.time != null ? String(raw.time).trim() : ''
 
@@ -179,18 +192,54 @@ async function brainCreateManualOne(
     if (resolved) slotId = resolved
   }
 
+  let timeNorm: string | null = normalizeHhMm(timeRaw)
+
+  if (isUuidString(slotId)) {
+    const slotProbe = await prisma.petshopSlot.findUnique({
+      where: { id: slotId },
+      select: { companyId: true, slotDate: true, slotTime: true },
+    })
+    if (!slotProbe || slotProbe.companyId !== companyId) {
+      return { ok: false, message: 'slot_id inválido para esta empresa.' }
+    }
+    const slotDateKey = slotProbe.slotDate.toISOString().slice(0, 10)
+    if (scheduled_date && scheduled_date !== slotDateKey) {
+      return { ok: false, message: `scheduled_date (${scheduled_date}) não coincide com a data do slot (${slotDateKey}).` }
+    }
+    scheduled_date = slotDateKey
+    if (!timeNorm) timeNorm = formatUtcHhMm(slotProbe.slotTime)
+  }
+
   if (!isUuidString(slotId)) {
     return { ok: false, message: 'Informe slot_id (UUID) ou time (HH:MM) com scheduled_date.' }
   }
+  if (!timeNorm) {
+    return { ok: false, message: 'Informe time (HH:MM) ou slot_id com horário na grade.' }
+  }
 
-  return createManualScheduleAppointment(companyId, {
-    client_id: clientRawManual,
-    pet_id: resolvedPetManual.id,
-    service_id,
-    slot_id: slotId,
-    scheduled_date,
-    notes: raw.notes == null || raw.notes === '' ? null : String(raw.notes),
+  const clientRow = await prisma.client.findFirst({
+    where: { id: clientRawManual, companyId },
+    select: { name: true },
   })
+
+  const notes = raw.notes == null || raw.notes === '' ? null : String(raw.notes)
+
+  return {
+    ok: true,
+    item: {
+      client_id: clientRawManual,
+      client_name: clientRow?.name ?? undefined,
+      pet_id: resolvedPetManual.id,
+      pet_name: resolvedPetManual.name,
+      service_id,
+      service_name: resolvedSvc.name,
+      slot_id: slotId,
+      scheduled_date,
+      time: timeNorm,
+      scheduled_at: `${scheduled_date}T${timeNorm}:00`,
+      notes,
+    },
+  }
 }
 
 export const ACTION_BRAIN_TOOLS = [
@@ -199,16 +248,20 @@ export const ACTION_BRAIN_TOOLS = [
     function: {
       name: 'create_campaign_draft',
       description:
-        `Monta draft de campanha: JSON type campaign_draft para o painel. Inclua até ${SECOND_BRAIN_CAMPAIGN_DRAFT_MAX_TARGETS} UUIDs para o dono escolher destinatários; o envio real respeita o limite do plano (campo max_recipients_per_send no JSON).`,
+        `Monta rascunho de campanha (JSON campaign_draft). **Uma** chamada com todos os client_ids. **message_template** = texto WhatsApp final, **sem** placeholders com chaves (ex.: nada de «duas chaves + nome»); saudação neutra («Olá,» / «Olá!») quando vários destinatários. Com **dois ou mais** client_ids, se o aviso for sobre **agendamento, remarcação ou cancelamento**, o texto deve ser **genérico**: a mesma mensagem para todos — **não** coloque nome de pet, data, hora ou serviço **de um** cliente que não se aplique aos outros. Para texto **100% personalizado** por cliente, use **uma campanha por vez** ou só um client_id. Promoções/avisos gerais: texto comum. Até ${SECOND_BRAIN_CAMPAIGN_DRAFT_MAX_TARGETS} UUIDs; max_recipients_per_send do plano.`,
       parameters: {
         type: 'object',
         properties: {
           client_ids: {
             type: 'array',
             items: { type: 'string' },
-            description: `UUIDs dos clientes — até ${SECOND_BRAIN_CAMPAIGN_DRAFT_MAX_TARGETS} na lista do rascunho.`,
+            description: `Todos os UUIDs dos clientes nesta campanha — até ${SECOND_BRAIN_CAMPAIGN_DRAFT_MAX_TARGETS} na lista (uma chamada só).`,
           },
-          message_template: { type: 'string', description: 'Texto sugerido da mensagem.' },
+          message_template: {
+            type: 'string',
+            description:
+              'Texto único para todos; **sem** marcadores entre chaves duplas. 2+ clientes + aviso de agenda: texto genérico, sem dados de um agendamento que não valha para os outros.',
+          },
         },
         required: ['client_ids', 'message_template'],
       },
@@ -322,7 +375,7 @@ export const ACTION_BRAIN_TOOLS = [
     function: {
       name: 'create_manual_appointment',
       description:
-        'Cria agendamento na hora (sem cartão). Preferir create_appointment_draft para o dono revisar. Se não tiver slot_id na conversa, passe time (HH:MM) com scheduled_date e service_id para o backend resolver o slot.',
+        'Gera rascunho de um agendamento para o dono confirmar no painel (não grava até o botão). Preferir create_appointment_draft quando quiser cartão com edição de notas. Passe time (HH:MM) ou slot_id.',
       parameters: {
         type: 'object',
         properties: {
@@ -344,14 +397,17 @@ export const ACTION_BRAIN_TOOLS = [
     type: 'function',
     function: {
       name: 'search_appointments',
-      description: `Lista agendamentos da empresa (até ${BRAIN_SEARCH_APPOINTMENTS_MAX}) com UUIDs para cancelar/remarcar. Filtros opcionais.`,
+      description: `Lista agendamentos de **serviços na grade** (banho, consulta, etc.) em petshop_appointments — até ${BRAIN_SEARCH_APPOINTMENTS_MAX} com appointment_id (UUID) para cancelar/remarcar. **Não inclui hotel nem creche**; para hospedagem use search_lodging_reservations. Se o dono pedir cancelar vários sem ids, chame com from_date = hoje e to_date conforme o período.`,
       parameters: {
         type: 'object',
         properties: {
           client_id: { type: 'string', description: 'UUID do cliente.' },
           pet_id: { type: 'string', description: 'UUID do pet.' },
-          from_date: { type: 'string', description: 'YYYY-MM-DD (scheduledDate >=).' },
-          to_date: { type: 'string', description: 'YYYY-MM-DD (scheduledDate <=).' },
+          from_date: {
+            type: 'string',
+            description: 'YYYY-MM-DD inclusive (scheduledDate >=). Para “próximos” incluindo hoje, use a data de hoje do contexto.',
+          },
+          to_date: { type: 'string', description: 'YYYY-MM-DD inclusive (scheduledDate <=).' },
           include_cancelled: {
             type: 'boolean',
             description: 'Se true, inclui cancelados e no_show; padrão só ativos (pending, confirmed, …).',
@@ -364,8 +420,37 @@ export const ACTION_BRAIN_TOOLS = [
   {
     type: 'function',
     function: {
+      name: 'search_lodging_reservations',
+      description:
+        'Lista **reservas já existentes** de hotel ou creche (hospedagem). Não agenda nova hospedagem pelo assistente: para **criar** reserva ou ver **vagas/disponibilidade** na grade de hotel/creche, o dono deve usar a **guia Hospedagem** do painel. Use esta tool só para consultar reservas (quem, datas, tipo) quando o dono perguntar.',
+      parameters: {
+        type: 'object',
+        properties: {
+          client_id: { type: 'string', description: 'UUID do cliente (opcional).' },
+          type: {
+            type: 'string',
+            description: 'hotel | daycare ou omitir para ambos.',
+            enum: ['hotel', 'daycare'],
+          },
+          from_date: {
+            type: 'string',
+            description: 'YYYY-MM-DD — reservas que ainda envolvem essa data (sobreposição com período).',
+          },
+          to_date: { type: 'string', description: 'YYYY-MM-DD inclusive (janela de busca).' },
+          include_cancelled: {
+            type: 'boolean',
+            description: 'Se true, inclui canceladas; padrão só ativas/confirmadas/check-in.',
+          },
+        },
+        required: [],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
       name: 'create_manual_appointments_batch',
-      description: `Cria vários agendamentos de uma vez (máx. ${BRAIN_BATCH_APPOINTMENTS_MAX}). Cada item: mesmo formato que create_manual_appointment (client_id, pet_id, pet_name, scheduled_date, service_id ou service_name, time ou slot_id).`,
+      description: `Rascunho de vários agendamentos (máx. ${BRAIN_BATCH_APPOINTMENTS_MAX}) para confirmar no painel. Cada item: mesmo formato que create_manual_appointment.`,
       parameters: {
         type: 'object',
         properties: {
@@ -398,7 +483,7 @@ export const ACTION_BRAIN_TOOLS = [
     type: 'function',
     function: {
       name: 'reschedule_appointments_batch',
-      description: `Remarca vários agendamentos (máx. ${BRAIN_BATCH_APPOINTMENTS_MAX}) para novos horários na grade. Cada item: appointment_id + (new_slot_id OU new_scheduled_date + new_time). Não suporta par G/GG de dois slots — use cancel e recrie.`,
+      description: `Rascunho para remarcar vários (máx. ${BRAIN_BATCH_APPOINTMENTS_MAX}) na grade; o dono confirma no painel. Por item: appointment_id + (new_slot_id OU new_scheduled_date + new_time). Par G/GG: cancelar e recriar.`,
       parameters: {
         type: 'object',
         properties: {
@@ -425,7 +510,7 @@ export const ACTION_BRAIN_TOOLS = [
     type: 'function',
     function: {
       name: 'cancel_appointments_batch',
-      description: `Cancela vários agendamentos (máx. ${BRAIN_BATCH_APPOINTMENTS_MAX}) pelos UUIDs. Cada um cancela par G/GG se aplicável (mesma regra de cancel_appointment).`,
+      description: `Rascunho para cancelar vários (máx. ${BRAIN_BATCH_APPOINTMENTS_MAX}); confirmação no painel. Par G/GG cancela em conjunto ao confirmar cada id.`,
       parameters: {
         type: 'object',
         properties: {
@@ -445,7 +530,7 @@ export const ACTION_BRAIN_TOOLS = [
     function: {
       name: 'cancel_appointment',
       description:
-        'Cancela um agendamento pelo UUID. Se for par de dois horários (pet G/GG), cancela o vínculo. Use appointment_id vindo da agenda do painel ou de consulta SQL — não invente UUID.',
+        'Rascunho de cancelamento; o dono confirma no painel. UUID de search_appointments ou SQL. Par G/GG: ao confirmar, cancela o vínculo.',
       parameters: {
         type: 'object',
         properties: {
@@ -730,18 +815,9 @@ export async function executeActionBrainTool(name: string, args: Record<string, 
     }
 
     case 'create_manual_appointment': {
-      const out = await brainCreateManualOne(companyId, args)
-      if (!out.ok) {
-        return `Erro ao criar agendamento: ${out.message}`
-      }
-      return JSON.stringify({
-        type: 'appointment_created',
-        appointment_id: out.appointment_id,
-        scheduled_date: out.scheduled_date,
-        service_id: args.service_id,
-        pet_id: args.pet_id,
-        client_id: args.client_id,
-      })
+      const out = await brainResolveManualScheduleItem(companyId, args)
+      if (!out.ok) return `Rascunho inválido: ${out.message}`
+      return JSON.stringify({ type: 'manual_schedule_draft', ...out.item })
     }
 
     case 'search_appointments': {
@@ -817,28 +893,87 @@ export async function executeActionBrainTool(name: string, args: Record<string, 
       })
     }
 
+    case 'search_lodging_reservations': {
+      const includeLodgingCancelled = args.include_cancelled === true
+      const where: {
+        companyId: number
+        clientId?: string
+        type?: string
+        status?: { notIn: string[] }
+        AND?: Array<Record<string, unknown>>
+      } = { companyId }
+      const lcid = String(args.client_id ?? '').trim()
+      if (lcid && isUuidString(lcid)) where.clientId = lcid
+      const lodgType = String(args.type ?? '').trim().toLowerCase()
+      if (lodgType === 'hotel' || lodgType === 'daycare') where.type = lodgType
+      if (!includeLodgingCancelled) {
+        where.status = { notIn: ['cancelled'] }
+      }
+      const lf = String(args.from_date ?? '').trim()
+      const lt = String(args.to_date ?? '').trim()
+      if (/^\d{4}-\d{2}-\d{2}$/.test(lf) && /^\d{4}-\d{2}-\d{2}$/.test(lt)) {
+        const y1 = Number(lf.slice(0, 4))
+        const m1 = Number(lf.slice(5, 7))
+        const d1 = Number(lf.slice(8, 10))
+        const y2 = Number(lt.slice(0, 4))
+        const m2 = Number(lt.slice(5, 7))
+        const d2 = Number(lt.slice(8, 10))
+        const start = new Date(Date.UTC(y1, m1 - 1, d1))
+        const end = new Date(Date.UTC(y2, m2 - 1, d2))
+        where.AND = [{ checkinDate: { lte: end } }, { checkoutDate: { gte: start } }]
+      } else if (/^\d{4}-\d{2}-\d{2}$/.test(lf)) {
+        const y = Number(lf.slice(0, 4))
+        const m = Number(lf.slice(5, 7))
+        const d = Number(lf.slice(8, 10))
+        const start = new Date(Date.UTC(y, m - 1, d))
+        where.AND = [{ checkoutDate: { gte: start } }]
+      }
+
+      const lrows = await prisma.petshopLodgingReservation.findMany({
+        where,
+        take: BRAIN_SEARCH_APPOINTMENTS_MAX,
+        orderBy: { checkinDate: 'asc' },
+        select: {
+          id: true,
+          type: true,
+          status: true,
+          checkinDate: true,
+          checkoutDate: true,
+          client: { select: { name: true } },
+          pet: { select: { name: true } },
+          roomType: { select: { name: true } },
+        },
+      })
+
+      return JSON.stringify({
+        type: 'lodging_reservations_found',
+        total_returned: lrows.length,
+        reservations: lrows.map((r) => ({
+          reservation_id: r.id,
+          lodging_type: r.type === 'daycare' ? 'creche' : 'hotel',
+          status: r.status,
+          checkin_date: r.checkinDate ? r.checkinDate.toISOString().slice(0, 10) : null,
+          checkout_date: r.checkoutDate ? r.checkoutDate.toISOString().slice(0, 10) : null,
+          client_name: r.client?.name ?? null,
+          pet_name: r.pet?.name ?? null,
+          room_type_name: r.roomType?.name ?? null,
+        })),
+      })
+    }
+
     case 'create_manual_appointments_batch': {
       const rawItems = Array.isArray(args.items) ? args.items : []
       const items = rawItems.slice(0, BRAIN_BATCH_APPOINTMENTS_MAX) as Record<string, unknown>[]
       if (!items.length) return 'Informe items (array não vazio).'
-      const succeeded: { index: number; appointment_id: string; scheduled_date: string }[] = []
-      const failed: { index: number; message: string }[] = []
+      const resolved: ManualScheduleItemPayload[] = []
       for (let i = 0; i < items.length; i++) {
-        const o = await brainCreateManualOne(companyId, items[i]!)
-        if (o.ok) {
-          succeeded.push({
-            index: i,
-            appointment_id: o.appointment_id,
-            scheduled_date: o.scheduled_date,
-          })
-        } else {
-          failed.push({ index: i, message: o.message })
-        }
+        const o = await brainResolveManualScheduleItem(companyId, items[i]!)
+        if (!o.ok) return `Item ${i}: ${o.message}`
+        resolved.push(o.item)
       }
       return JSON.stringify({
-        type: 'appointments_batch_created',
-        succeeded,
-        failed,
+        type: 'manual_schedule_batch_draft',
+        items: resolved,
       })
     }
 
@@ -846,30 +981,45 @@ export async function executeActionBrainTool(name: string, args: Record<string, 
       const rawRe = Array.isArray(args.items) ? args.items : []
       const reItems = rawRe.slice(0, BRAIN_BATCH_APPOINTMENTS_MAX) as Record<string, unknown>[]
       if (!reItems.length) return 'Informe items (array não vazio).'
-      const succeeded: { index: number; appointment_id: string; scheduled_date: string }[] = []
-      const failed: { index: number; message: string }[] = []
-      for (let i = 0; i < reItems.length; i++) {
-        const it = reItems[i]!
-        const r = await rescheduleManualAppointment(companyId, {
-          appointment_id: String(it.appointment_id ?? ''),
-          new_slot_id: it.new_slot_id != null ? String(it.new_slot_id) : undefined,
-          new_scheduled_date: it.new_scheduled_date != null ? String(it.new_scheduled_date) : undefined,
-          new_time: it.new_time != null ? String(it.new_time) : undefined,
+      const actionable: Record<string, unknown>[] = []
+      for (const it of reItems) {
+        const aid = String(it.appointment_id ?? '').trim()
+        if (!isUuidString(aid)) continue
+        const row = await prisma.petshopAppointment.findFirst({
+          where: { id: aid, companyId },
+          include: {
+            client: { select: { name: true } },
+            pet: { select: { name: true } },
+            service: { select: { name: true } },
+            slot: { select: { slotDate: true, slotTime: true } },
+          },
         })
-        if (r.ok) {
-          succeeded.push({
-            index: i,
-            appointment_id: r.appointment_id,
-            scheduled_date: r.scheduled_date,
-          })
-        } else {
-          failed.push({ index: i, message: r.message })
-        }
+        if (!row || row.status === 'cancelled' || row.status === 'no_show') continue
+        const nsRaw = String(it.new_slot_id ?? '').trim()
+        const nd = String(it.new_scheduled_date ?? '').trim()
+        const ntRaw = String(it.new_time ?? '').trim()
+        const hasSlot = isUuidString(nsRaw)
+        const ntNorm = normalizeHhMm(ntRaw)
+        const hasDateTime = /^\d{4}-\d{2}-\d{2}$/.test(nd) && ntNorm != null
+        if (!hasSlot && !hasDateTime) continue
+        const d = row.scheduledDate ? row.scheduledDate.toISOString().slice(0, 10) : ''
+        const t = row.slot?.slotTime ? formatUtcHhMm(row.slot.slotTime) : ''
+        const summary = [row.client?.name, row.pet?.name, row.service?.name, d && t ? `${d} ${t}` : '']
+          .filter((x) => x && String(x).trim() !== '')
+          .join(' · ')
+        actionable.push({
+          appointment_id: aid,
+          ...(hasSlot ? { new_slot_id: nsRaw } : {}),
+          ...(hasDateTime ? { new_scheduled_date: nd, new_time: ntNorm } : {}),
+          summary,
+        })
+      }
+      if (!actionable.length) {
+        return 'Nenhuma remarcação válida para montar o rascunho. Use appointment_id (UUID) retornado por search_appointments, agendamento ainda ativo, e informe new_slot_id OU new_scheduled_date + new_time (HH:MM). Não invente UUIDs se a busca não retornou agendamentos.'
       }
       return JSON.stringify({
-        type: 'appointments_batch_rescheduled',
-        succeeded,
-        failed,
+        type: 'reschedule_appointments_batch_draft',
+        items: actionable,
       })
     }
 
@@ -881,20 +1031,34 @@ export async function executeActionBrainTool(name: string, args: Record<string, 
         args.cancel_reason != null && String(args.cancel_reason).trim() !== ''
           ? String(args.cancel_reason).trim()
           : null
-      const succeeded: { appointment_id: string; cancelled_at: string }[] = []
-      const failed: { appointment_id: string; message: string }[] = []
+      const valid: { appointment_id: string; summary: string }[] = []
       for (const id of ids) {
-        const out = await cancelPetshopAppointment(companyId, id, reason)
-        if (out.ok) {
-          succeeded.push({ appointment_id: out.appointment_id, cancelled_at: out.cancelled_at })
-        } else {
-          failed.push({ appointment_id: id, message: out.message })
-        }
+        if (!isUuidString(id)) continue
+        const row = await prisma.petshopAppointment.findFirst({
+          where: { id, companyId },
+          include: {
+            client: { select: { name: true } },
+            pet: { select: { name: true } },
+            service: { select: { name: true } },
+            slot: { select: { slotDate: true, slotTime: true } },
+          },
+        })
+        if (!row || row.status === 'cancelled' || row.status === 'no_show') continue
+        const d = row.scheduledDate ? row.scheduledDate.toISOString().slice(0, 10) : ''
+        const t = row.slot?.slotTime ? formatUtcHhMm(row.slot.slotTime) : ''
+        const summary = [row.client?.name, row.pet?.name, row.service?.name, d && t ? `${d} ${t}` : '']
+          .filter((x) => x && String(x).trim() !== '')
+          .join(' · ')
+        valid.push({ appointment_id: id, summary })
+      }
+      if (!valid.length) {
+        return 'Nenhum cancelamento em lote: nenhum appointment_id válido e ativo encontrado. Chame search_appointments e use só UUIDs retornados por ela. Se não houver agendamentos no período, explique isso ao dono **sem** enviar JSON de rascunho.'
       }
       return JSON.stringify({
-        type: 'appointments_batch_cancelled',
-        succeeded,
-        failed,
+        type: 'cancel_appointments_batch_draft',
+        appointment_ids: valid.map((v) => v.appointment_id),
+        cancel_reason: reason,
+        summaries: valid,
       })
     }
 
@@ -903,12 +1067,30 @@ export async function executeActionBrainTool(name: string, args: Record<string, 
       const reasonRaw = args.cancel_reason
       const cancel_reason =
         reasonRaw != null && String(reasonRaw).trim() !== '' ? String(reasonRaw).trim() : null
-      const out = await cancelPetshopAppointment(companyId, aid, cancel_reason)
-      if (!out.ok) return out.message
+      if (!isUuidString(aid)) return 'appointment_id inválido.'
+      const row = await prisma.petshopAppointment.findFirst({
+        where: { id: aid, companyId },
+        include: {
+          client: { select: { name: true } },
+          pet: { select: { name: true } },
+          service: { select: { name: true } },
+          slot: { select: { slotDate: true, slotTime: true } },
+        },
+      })
+      if (!row) return 'Agendamento não encontrado.'
+      if (row.status === 'cancelled' || row.status === 'no_show') {
+        return 'Este agendamento já está encerrado ou cancelado.'
+      }
+      const d = row.scheduledDate ? row.scheduledDate.toISOString().slice(0, 10) : ''
+      const t = row.slot?.slotTime ? formatUtcHhMm(row.slot.slotTime) : ''
+      const summary = [row.client?.name, row.pet?.name, row.service?.name, d && t ? `${d} ${t}` : '']
+        .filter((x) => x && String(x).trim() !== '')
+        .join(' · ')
       return JSON.stringify({
-        type: 'appointment_cancelled',
-        appointment_id: out.appointment_id,
-        cancelled_at: out.cancelled_at,
+        type: 'cancel_appointment_draft',
+        appointment_id: aid,
+        cancel_reason,
+        summary,
       })
     }
 

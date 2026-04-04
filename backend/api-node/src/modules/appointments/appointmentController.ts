@@ -4,6 +4,7 @@ import { prisma } from '../../lib/prisma'
 import { isUuidString, parseOptionalUuid } from '../../lib/uuidValidation'
 import { computeAvailableSlotsResponse } from './availableSlotsQuery'
 import { cancelPetshopAppointment, extractDoublePairPartnerAppointmentId } from './appointmentCancelCore'
+import { rescheduleManualAppointment } from './appointmentRescheduleCore'
 import { createManualScheduleAppointment } from './manualScheduleCore'
 
 function petSizeNeedsLargeDurationMultiplier(
@@ -370,6 +371,33 @@ export async function getAvailableSlots(req: Request, res: Response) {
   } catch (error) {
     console.error('Error getting available slots:', error)
     res.status(500).json({ error: 'Failed to get available slots' })
+  }
+}
+
+// POST /appointments/reschedule-to-slot
+// Remarca na grade (slotId + scheduledDate), mesma lógica do Second Brain.
+export async function rescheduleToSlot(req: Request, res: Response) {
+  try {
+    const companyId = req.user!.companyId
+    const body = req.body as Record<string, unknown>
+    const appointment_id = String(body.appointment_id ?? '').trim()
+    const result = await rescheduleManualAppointment(companyId, {
+      appointment_id,
+      new_slot_id: body.new_slot_id != null ? String(body.new_slot_id) : undefined,
+      new_scheduled_date: body.new_scheduled_date != null ? String(body.new_scheduled_date) : undefined,
+      new_time: body.new_time != null ? String(body.new_time) : undefined,
+    })
+    if (!result.ok) {
+      return res.status(400).json({ error: result.message })
+    }
+    const appointment = await prisma.petshopAppointment.findUniqueOrThrow({
+      where: { id: result.appointment_id },
+      include: appointmentInclude,
+    })
+    res.json(shapeAppointment(appointment))
+  } catch (error) {
+    console.error('Error reschedule-to-slot:', error)
+    res.status(500).json({ error: 'Failed to reschedule appointment' })
   }
 }
 

@@ -13,6 +13,11 @@ export async function sendCampaign(req: Request, res: Response) {
     const body = req.body ?? {}
     const clients = Array.isArray(body.clients) ? body.clients : []
     const message = typeof body.message === 'string' ? body.message : ''
+    const perRaw = body.per_client_messages
+    const perClientMessages =
+      perRaw != null && typeof perRaw === 'object' && !Array.isArray(perRaw)
+        ? (perRaw as Record<string, string>)
+        : null
 
     if (!clients.length) {
       return res.status(400).json({ error: 'Informe clients (array com id e phone)' })
@@ -47,7 +52,7 @@ export async function sendCampaign(req: Request, res: Response) {
       })
     }
 
-    const result = await sendCampaignMessages(companyId, normalized, message)
+    const result = await sendCampaignMessages(companyId, normalized, message, perClientMessages)
     return res.json(result)
   } catch (err: any) {
     const msg = err?.message ? String(err.message) : 'Falha ao enviar campanha'

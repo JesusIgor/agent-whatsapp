@@ -154,6 +154,12 @@ export function CampaignDraft({ clients, message, maxRecipientsPerSend, onClose 
           Limite de {sendCap} destinatário(s) por envio atingido. Desmarque alguém para trocar a seleção.
         </p>
       )}
+      {clients.length > 1 && (
+        <p className="mb-2 rounded-lg border border-amber-500/25 bg-amber-500/10 px-3 py-2 text-[11px] leading-snug text-amber-900 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-200">
+          <span className="font-medium">Vários destinatários:</span> a mesma mensagem será enviada a todos. Para avisos de{' '}
+          <span className="font-medium">agendamento, remarcação ou cancelamento</span>, use texto <span className="font-medium">genérico</span> — sem nome de pet, data ou hora de um cliente que não valha para os outros; saudação neutra (ex.: «Olá,» ou «Olá!»). Mensagem totalmente diferente por pessoa: envie em campanhas separadas.
+        </p>
+      )}
       <p className="mb-1 text-xs text-[#727B8E] dark:text-[#8a94a6]">Mensagem (editável)</p>
       <textarea
         value={draft}

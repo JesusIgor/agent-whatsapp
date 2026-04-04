@@ -87,7 +87,7 @@ _BK_PASSO3_MINI = """PASSO 3 — DATA E HORÁRIO (versão curta)
 Só `get_available_times` com **pet_id**, **service_id** (número), **specialty_id** (UUID do serviço) e **target_date** (YYYY-MM-DD). Sem data no ESTADO ATUAL → pergunte o dia.
 Não diga «cheio»/«sem vaga»/«disponível» sem JSON fresco da tool para aquela data e ids corretos.
 **DATA SEM VAGA** (fechado/lotado/lista vazia): na **mesma** rodada busque **outros** dias com `get_available_times` até ter horários reais para mostrar (detalhes completos abaixo se estiver em SCHEDULING).
-`availability_policy.excluded_due_to_minimum_notice_or_past`: explique se o cliente perguntar de horário que caiu nessa lista.
+`availability_policy.excluded_due_to_minimum_notice_or_past`: horários que já passaram hoje (ainda na grade) — explique se o cliente perguntar de um horário listado ali.
 `excluded_due_to_same_pet_already_booked_at_start`: pet já ocupa esse início (ex.: 2º bloco G/GG) — outro serviço só depois.
 **Remarcar mesma data:** `get_available_times` com `ignore_appointment_ids` = id (+ paired se G/GG).
 **G/GG + uses_double_slot:** só oferte slots com `second_slot_time`; `slot_id` = do bloco **inicial**. Horário «quebrado» (ex. 11h45) só se existir na lista — senão ofereça o slot real mais próximo."""
@@ -125,7 +125,7 @@ _BK_PASSO3 = """PASSO 3 — DATA E HORÁRIO
 • Data mencionada → YYYY-MM-DD; parâmetros: specialty_id, target_date, service_id (número), pet_id (UUID) — **specialty_id** do mesmo item em get_services (não confunda com dia/hora).
 • DISPONIBILIDADE ABERTA (sem data única: «quando tem?», «semana que vem?»): get_available_times para **cada** dia do período pedido; **lista consolidada** — evite ping-pong dia a dia.
 • Liste horários como em `available_times`. Pedido de **tudo** / lista completa → **todos** os itens. Só «opções» → pode mostrar 3 primeiros + perguntar restante.
-• `availability_policy.excluded_due_to_minimum_notice_or_past`: horários com vaga na grade mas fora da oferta (passado ou antecedência 2h Brasília) — explique se perguntarem de um horário listado ali.
+• `availability_policy.excluded_due_to_minimum_notice_or_past`: horários com vaga na grade mas já passados hoje (Brasília) — explique se perguntarem de um horário listado ali.
 • `availability_policy.excluded_due_to_same_pet_already_booked_at_start`: mesmo pet já tem serviço começando nesse horário neste dia (ex.: 2º bloco G/GG) — não oferte para **outro** serviço; primeiro horário livre = depois desses inícios.
 • Só trocar horário de compromisso **já marcado** → **reschedule_appointment**, nunca segundo `create` (CANÔNICAS C).
 • **Remarcação + G/GG:** até fechar reschedule, o horário **atual** ainda ocupa a grade — ofertas podem mudar; nunca «sem vaga» sem JSON da tool. «DADOS DE DISPONIBILIDADE» na entrada ajuda; nova data/intenção → chame **get_available_times** de novo.

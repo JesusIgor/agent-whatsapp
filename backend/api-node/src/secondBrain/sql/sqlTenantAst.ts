@@ -1,6 +1,16 @@
 import type { Select } from 'node-sql-parser'
 
-/** Política de tenant no WHERE/HAVING via AST (complementa heurísticas em sqlValidator). */
+/**
+ * Política de tenant no AST (complementa heurísticas em sqlValidator).
+ *
+ * Regras principais:
+ * - WHERE: como antes — basta um `company_id = tenant` em algum ramo AND (ou ambos os lados de OR seguros).
+ * - Alternativa segura: cada alias de tabela **permitida** no FROM precisa aparecer em
+ *   `alias.company_id = tenant` (qualificado) num conjunto **só-AND** (sem OR no topo da expressão)
+ *   no WHERE **ou** no ON de um **INNER** JOIN (JOIN sem LEFT/RIGHT/FULL/CROSS).
+ * - LEFT/RIGHT/FULL/CROSS: o ON **não** conta para cobertura — evita linhas preservadas sem filtro de tenant.
+ * - HAVING: não substitui WHERE/ON para cobertura; `illegalCompanyIdPredicateMessage` continua aplicável.
+ */
 
 function unwrapCteStmt(stmt: unknown): Select | null {
   if (!stmt || typeof stmt !== 'object') return null
@@ -49,22 +59,42 @@ function literalMatchesCompanyId(node: unknown, companyId: number): boolean {
   return Number(s) === companyId || s === String(companyId)
 }
 
+/** Nome da coluna (ex.: company_id) em column_ref, com suporte a column.expr.value. */
+function columnRefColumnName(node: unknown): string | null {
+  return columnName(node)
+}
+
+/** Alias da tabela em column_ref (ex.: pa); null se não qualificado. */
+function columnRefTableAlias(node: unknown): string | null {
+  if (!node || typeof node !== 'object') return null
+  const n = node as { type?: string; table?: string | null }
+  if (n.type !== 'column_ref' || n.table == null || String(n.table).trim() === '') return null
+  return String(n.table).toLowerCase()
+}
+
 function isCompanyIdEquality(node: unknown, companyId: number): boolean {
   if (!node || typeof node !== 'object') return false
   const n = node as { type?: string; operator?: string; left?: unknown; right?: unknown }
   if (n.type !== 'binary_expr') return false
   const op = String(n.operator).toUpperCase()
   if (op === '=' || op === '==') {
-    return columnName(n.left) === 'company_id' && literalMatchesCompanyId(n.right, companyId)
+    return columnRefColumnName(n.left) === 'company_id' && literalMatchesCompanyId(n.right, companyId)
   }
   if (op === 'IN') {
-    if (columnName(n.left) !== 'company_id') return false
+    if (columnRefColumnName(n.left) !== 'company_id') return false
     const right = n.right as { type?: string; value?: unknown[] }
     if (!right || right.type !== 'expr_list' || !Array.isArray(right.value)) return false
     if (right.value.length !== 1) return false
     return literalMatchesCompanyId(right.value[0], companyId)
   }
   return false
+}
+
+/** Igual a isCompanyIdEquality, mas exige tabela qualificada (pa.company_id = N). */
+function isQualifiedCompanyIdEquality(node: unknown, companyId: number): boolean {
+  if (!isCompanyIdEquality(node, companyId)) return false
+  const n = node as { left?: unknown }
+  return columnRefTableAlias(n.left) != null
 }
 
 function isOrNode(node: unknown): boolean {
@@ -116,6 +146,12 @@ function walkExpr(node: unknown, visit: (n: Record<string, unknown>) => void): v
   }
 }
 
+/** `a.company_id = b.company_id` em JOIN (mesmo tenant por linha); não usa literal — é seguro e comum. */
+function isQualifiedCompanyIdToCompanyIdEquality(n: { left?: unknown; right?: unknown }): boolean {
+  if (columnRefColumnName(n.left) !== 'company_id' || columnRefColumnName(n.right) !== 'company_id') return false
+  return columnRefTableAlias(n.left) != null && columnRefTableAlias(n.right) != null
+}
+
 /** Bloqueia `company_id <> …`, `LIKE`, subqueries em comparação com company_id, etc. */
 export function illegalCompanyIdPredicateMessage(where: unknown, companyId: number): string | null {
   if (where == null) return null
@@ -123,9 +159,10 @@ export function illegalCompanyIdPredicateMessage(where: unknown, companyId: numb
   walkExpr(where, (n) => {
     if (bad || n.type !== 'binary_expr') return
     const op = String(n.operator).toUpperCase()
-    const leftName = columnName(n.left)
+    const leftName = columnRefColumnName(n.left)
     if (leftName !== 'company_id') return
     if (op === '=' || op === '==') {
+      if (isQualifiedCompanyIdToCompanyIdEquality(n as { left?: unknown; right?: unknown })) return
       if (!literalMatchesCompanyId(n.right, companyId)) {
         bad = `company_id deve ser igual a ${companyId} nesta consulta.`
       }
@@ -149,6 +186,105 @@ function normalizeFrom(from: unknown): unknown[] {
   if (Array.isArray(from)) return from
   if (typeof from === 'object' && from !== null && 'expr' in from) return [from]
   return []
+}
+
+/** Só INNER JOIN (e JOIN) contam para company_id no ON; LEFT/RIGHT/FULL/CROSS não (evita vazamento). */
+function joinIsInner(join: unknown): boolean {
+  if (join == null) return false
+  const j = String(join).toUpperCase().replace(/\s+/g, ' ')
+  if (j.includes('LEFT') || j.includes('RIGHT') || j.includes('FULL') || j.includes('CROSS')) return false
+  return true
+}
+
+function aliasFromFromItem(item: Record<string, unknown>): string | null {
+  const a = item.as
+  if (a != null && String(a).trim() !== '') return String(a).toLowerCase()
+  const t = item.table
+  if (t != null && String(t).trim() !== '') return String(t).toLowerCase()
+  return null
+}
+
+/** Conjuntos AND sem OR no topo; se encontrar OR, retorna null (não usar para cobertura por ON). */
+function flattenAndConjunctsStrictNoOr(node: unknown): unknown[] | null {
+  if (node == null) return []
+  if (isOrNode(node)) return null
+  const n = node as { type?: string; operator?: string; left?: unknown; right?: unknown }
+  if (n.type === 'binary_expr' && String(n.operator).toUpperCase() === 'AND') {
+    const l = flattenAndConjunctsStrictNoOr(n.left)
+    const r = flattenAndConjunctsStrictNoOr(n.right)
+    if (l == null || r == null) return null
+    return [...l, ...r]
+  }
+  return [node]
+}
+
+/** Aliases com pa.company_id = N (ou c.company_id = N) em expressão só-AND. */
+function qualifiedCompanyTenantAliasesInExpr(expr: unknown, companyId: number): Set<string> | null {
+  const parts = flattenAndConjunctsStrictNoOr(expr)
+  if (parts == null) return null
+  const out = new Set<string>()
+  for (const p of parts) {
+    if (!isQualifiedCompanyIdEquality(p, companyId)) continue
+    const n = p as { left?: unknown }
+    const al = columnRefTableAlias(n.left)
+    if (al) out.add(al)
+  }
+  return out
+}
+
+function collectRequiredTenantAliases(
+  fromList: unknown[],
+  cteNames: Set<string>,
+  allowed: Set<string>,
+): string[] {
+  const req: string[] = []
+  for (const item of fromList) {
+    if (!item || typeof item !== 'object') continue
+    const row = item as { expr?: { ast?: Select }; table?: string }
+    if (row.expr?.ast?.type === 'select') continue
+    const t = row.table
+    if (t == null) continue
+    const tl = String(t).toLowerCase()
+    if (tl === 'dual' || cteNames.has(tl) || !allowed.has(tl)) continue
+    const al = aliasFromFromItem(row as Record<string, unknown>)
+    if (al) req.push(al)
+  }
+  return req
+}
+
+/**
+ * Cobertura multi-tenant sem depender só do WHERE: cada tabela permitida no FROM precisa de
+ * `alias.company_id = tenant` em um AND (sem OR) no WHERE ou no ON de um INNER JOIN.
+ */
+function isFromTenantSafeWithInnerOn(
+  sel: Select,
+  fromList: unknown[],
+  cteNames: Set<string>,
+  companyId: number,
+  allowed: Set<string>,
+): boolean {
+  const required = collectRequiredTenantAliases(fromList, cteNames, allowed)
+  if (required.length === 0) return false
+
+  let covered = new Set<string>()
+
+  if (sel.where) {
+    const w = qualifiedCompanyTenantAliasesInExpr(sel.where, companyId)
+    if (w == null) return false
+    covered = new Set(w)
+  }
+
+  for (const item of fromList) {
+    if (!item || typeof item !== 'object') continue
+    const row = item as { join?: unknown; on?: unknown }
+    if (!joinIsInner(row.join)) continue
+    if (row.on == null) continue
+    const fromOn = qualifiedCompanyTenantAliasesInExpr(row.on, companyId)
+    if (fromOn == null) return false
+    covered = new Set([...covered, ...fromOn])
+  }
+
+  return required.every((a) => covered.has(a))
 }
 
 function hasSetOpChain(sel: Select): boolean {
@@ -204,11 +340,22 @@ function validatePhysicalFromAndWhere(sel: Select, cteNames: Set<string>, compan
 
   if (!needsTenantOnThisSelect) return null
 
-  if (!isWhereTenantSafe(sel.where, companyId)) {
+  const illegalWhere = illegalCompanyIdPredicateMessage(sel.where, companyId)
+  if (illegalWhere) return illegalWhere
+
+  for (const item of fromList) {
+    if (!item || typeof item !== 'object') continue
+    const row = item as { join?: unknown; on?: unknown }
+    if (!joinIsInner(row.join) || row.on == null) continue
+    const ion = illegalCompanyIdPredicateMessage(row.on, companyId)
+    if (ion) return ion
+  }
+
+  const whereTenantSafe = isWhereTenantSafe(sel.where, companyId)
+  const innerOnTenantSafe = isFromTenantSafeWithInnerOn(sel, fromList, cteNames, companyId, allowed)
+  if (!whereTenantSafe && !innerOnTenantSafe) {
     return `A query deve garantir isolamento por empresa (company_id = ${companyId}) em cada parte que acessa tabelas de dados.`
   }
-  const illegal = illegalCompanyIdPredicateMessage(sel.where, companyId)
-  if (illegal) return illegal
 
   if (sel.having) {
     const hav = Array.isArray(sel.having) ? sel.having[0] : sel.having

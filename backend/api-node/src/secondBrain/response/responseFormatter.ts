@@ -1,7 +1,6 @@
 import { getBrainDateContextPromptLine } from '../clockContext'
+import { OPENAI_RESPONSES_URL, extractResponsesAssistantText, responsesUserMessage } from '../openaiResponses'
 import type { AnalyticsBrainMessage } from '../types'
-
-const OPENAI_URL = 'https://api.openai.com/v1/chat/completions'
 
 function serializeRows(rows: unknown[]): string {
   return JSON.stringify(rows, (_, v) => {
@@ -40,6 +39,11 @@ Use emojis com moderação. Formate valores monetários como R$ 1.234,56 quando 
 Os dados abaixo são o resultado de uma consulta somente leitura no banco (já limitados ao ${params.petshopName}).
 Não invente números fora do JSON. Nunca mostre SQL, nomes de tabela ou sintaxe de banco na resposta.
 
+Nome do estabelecimento na resposta:
+- Trate sempre os dados como sendo **somente** do petshop "${params.petshopName}" (sessão atual).
+- Não repita nem confirme nomes de petshops citados pelo dono na pergunta se forem diferentes desse — o JSON nunca é de outra empresa.
+- Se a pergunta mencionar outro nome (fictício, concorrente ou erro), responda com os dados normalmente e use só "${params.petshopName}"; opcionalmente uma frase curta: estes são os dados da sua conta no painel.
+
 Proibido na resposta ao usuário:
 - Mencionar service_id, client_id, pet_id, company_id, appointment_id ou qualquer ID numérico interno.
 - Dizer "serviço de ID 41" ou similar: use sempre o nome do serviço (campo name / service_name no JSON).
@@ -54,7 +58,7 @@ Privacidade e UX:
 
   const user = `Histórico:\n${hist || '(vazio)'}\n\nPergunta:\n${params.userMessage}\n\nResultado (JSON):\n${capped}`
 
-  const res = await fetch(OPENAI_URL, {
+  const res = await fetch(OPENAI_RESPONSES_URL, {
     method: 'POST',
     headers: {
       Authorization: `Bearer ${params.apiKey}`,
@@ -62,12 +66,11 @@ Privacidade e UX:
     },
     body: JSON.stringify({
       model: params.model,
+      instructions: system,
+      input: [responsesUserMessage(user)],
       temperature: 0.3,
-      max_completion_tokens: 1500,
-      messages: [
-        { role: 'system', content: system },
-        { role: 'user', content: user },
-      ],
+      max_output_tokens: 1500,
+      store: false,
     }),
   })
 
@@ -76,6 +79,6 @@ Privacidade e UX:
     throw new Error(`OpenAI (format): ${t}`)
   }
 
-  const data = (await res.json()) as { choices?: Array<{ message?: { content?: string } }> }
-  return data.choices?.[0]?.message?.content?.trim() ?? 'Não consegui formatar a resposta.'
+  const data = (await res.json()) as { output?: unknown[]; output_text?: string }
+  return extractResponsesAssistantText(data) || 'Não consegui formatar a resposta.'
 }

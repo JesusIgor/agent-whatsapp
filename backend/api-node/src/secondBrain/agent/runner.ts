@@ -92,7 +92,8 @@ export async function runAnalyticsBrainChat(params: {
         validationError,
         executionErrorHint,
       })
-    } catch {
+    } catch (e) {
+      console.error('[SecondBrain] generateSqlWithLlm:', e instanceof Error ? e.message : e)
       return {
         reply: `Não consegui processar essa pergunta agora. Tente de novo em instantes ou reformule o que você quer saber sobre o ${petshopName}.`,
       }

@@ -754,7 +754,7 @@ def build_booking_tools(company_id: int, client_id) -> list:
         for s in slots:
             slot_dt = datetime.combine(parsed_date, s["slot_time"])
             st = str(s["slot_time"])[:5]
-            if slot_dt <= now + timedelta(hours=2):
+            if slot_dt <= now:
                 excluded_lead.append(st)
                 continue
             available_slots.append(
@@ -795,9 +795,9 @@ def build_booking_tools(company_id: int, client_id) -> list:
             esp = sorted(set(excluded_same_pet_starts or []))
             note = (
                 "A view já filtra por especialidade ativa, slot não bloqueado e vaga. "
-                "Aqui só entram em available_times horários com início > agora + 2h (Brasília). "
+                "Aqui só entram em available_times horários com início **depois** de agora (Brasília). "
                 "Se o cliente perguntar por um horário listado em excluded_..., explique: "
-                "já passou ou não cumpre a antecedência mínima — não invente outro motivo."
+                "já passou — não invente outro motivo."
             )
             if esp:
                 note += (
@@ -807,7 +807,7 @@ def build_booking_tools(company_id: int, client_id) -> list:
                 )
             pol = {
                 "timezone": "America/Sao_Paulo",
-                "minimum_hours_ahead_of_start": 2,
+                "minimum_hours_ahead_of_start": 0,
                 "reference_now_local": now.strftime("%Y-%m-%d %H:%M"),
                 "data_source": "vw_slot_availability",
                 "specialty_id": spec_id,
@@ -829,7 +829,7 @@ def build_booking_tools(company_id: int, client_id) -> list:
                     "full_days": [],
                     "available_times": [],
                     "message": (
-                        "Para este pet neste dia, após antecedência mínima, todo início de faixa com vaga coincide "
+                        "Para este pet neste dia, todo início de faixa com vaga coincide "
                         "com um horário em que ele já tem serviço (cada bloco G/GG conta). "
                         "Para **outro** serviço no mesmo dia, oferte só horários **depois** do último bloco ocupado "
                         "— veja availability_policy.excluded_due_to_same_pet_already_booked_at_start ou tente outro dia. "
@@ -846,7 +846,7 @@ def build_booking_tools(company_id: int, client_id) -> list:
                 "available_times": [],
                 "message": (
                     "Não há horários elegíveis no momento: há vagas na grade, mas todos os slots "
-                    "já passaram ou começam dentro de 2 horas a partir de agora (horário de Brasília). "
+                    "já passaram (horário de Brasília). "
                     "Use availability_policy.excluded_due_to_minimum_notice_or_past para responder "
                     "se o cliente insistir num horário (ex.: 9h)."
                 ),
@@ -926,7 +926,7 @@ def build_booking_tools(company_id: int, client_id) -> list:
                 ) <= 0:
                     continue
                 slot_dt = datetime.combine(parsed_date, a["slot_time"])
-                if slot_dt <= now + timedelta(hours=2):
+                if slot_dt <= now:
                     continue
                 sid_a = str(a["id"])
                 starter_ids.add(sid_a)
@@ -955,7 +955,7 @@ def build_booking_tools(company_id: int, client_id) -> list:
                 "available_times": [],
                 "message": (
                     "Para este pet/serviço é necessário **dois slots seguidos** com vaga; "
-                    "não há par disponível hoje respeitando a antecedência mínima de 2h. "
+                    "não há par disponível hoje (horários futuros com dois blocos livres). "
                     "Chame get_available_times noutra data ou ofereça os horários de outro dia."
                 ),
                 "availability_policy": _availability_policy(

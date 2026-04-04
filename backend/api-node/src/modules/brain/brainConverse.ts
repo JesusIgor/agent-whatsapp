@@ -1,9 +1,12 @@
 import { getBrainDateContextPromptLine } from '../../secondBrain/clockContext'
+import {
+  OPENAI_RESPONSES_URL,
+  extractResponsesAssistantText,
+  responsesChatMessage,
+} from '../../secondBrain/openaiResponses'
 import { sanitizeAssistantHistoryContent, sanitizeUserFacingReply } from '../../secondBrain/sanitize'
 import { BRAIN_CONVERSE_HISTORY_LIMIT } from './brainPlanConstants'
 import type { BrainMessage } from './brain.types'
-
-const OPENAI_URL = 'https://api.openai.com/v1/chat/completions'
 
 function toMessages(history: BrainMessage[], max: number): Array<{ role: 'user' | 'assistant'; content: string }> {
   return history
@@ -30,15 +33,15 @@ export async function runBrainConverse(params: {
 ${getBrainDateContextPromptLine()}
 Responda em português brasileiro, de forma breve, calorosa e natural.
 Esta é uma conversa geral: cumprimente, agradeça ou explique de forma curta o que você pode fazer (responder perguntas sobre os dados do petshop, ajudar a agendar ou montar campanhas) sem inventar números.
-Não gere SQL nem JSON estruturado. Não use blocos de código.`
+Não gere SQL nem JSON estruturado. Não use blocos de código.
+Se o dono pedir números, listagens ou relatórios do negócio, diga que para isso ele pode perguntar direto (ex.: "quantos clientes tenho?") e o painel aciona a consulta de dados; se pedir agendar/cancelar/remarcar ou campanha, que use um pedido explícito nesse sentido para o assistente acionar as ferramentas certas.`
 
-  const messages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }> = [
-    { role: 'system', content: system },
-    ...prior.map((m) => ({ role: m.role, content: m.content })),
-    { role: 'user', content: params.message },
+  const input = [
+    ...prior.map((m) => responsesChatMessage(m.role, m.content)),
+    responsesChatMessage('user', params.message),
   ]
 
-  const res = await fetch(OPENAI_URL, {
+  const res = await fetch(OPENAI_RESPONSES_URL, {
     method: 'POST',
     headers: {
       Authorization: `Bearer ${params.apiKey}`,
@@ -46,9 +49,11 @@ Não gere SQL nem JSON estruturado. Não use blocos de código.`
     },
     body: JSON.stringify({
       model: params.model,
+      instructions: system,
+      input,
       temperature: 0.5,
-      max_completion_tokens: 400,
-      messages,
+      max_output_tokens: 400,
+      store: false,
     }),
   })
 
@@ -58,8 +63,8 @@ Não gere SQL nem JSON estruturado. Não use blocos de código.`
     }
   }
 
-  const data = (await res.json()) as { choices?: Array<{ message?: { content?: string } }> }
-  const text = data.choices?.[0]?.message?.content?.trim()
+  const data = (await res.json()) as { output?: unknown[]; output_text?: string }
+  const text = extractResponsesAssistantText(data) || undefined
   if (!text) {
     return {
       reply: `Oi! Tudo certo por aqui. Se quiser ver números do ${params.petshopName} ou agendar um cliente, me avise.`,
