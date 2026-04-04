@@ -1,15 +1,29 @@
 /**
- * Limites do Second Brain / campanhas por plano — ajuste aqui conforme o produto evolui.
+ * Limites do Second Brain / campanhas por plano.
  * Chaves = valor de `saas_companies.plan` em minúsculas (ex.: "pro", "free").
+ *
+ * Mensagens diárias e destinatários por campanha no **Pro** vêm do `.env` (api-node):
+ * `SECOND_BRAIN_PRO_DAILY_MESSAGE_LIMIT`, `SECOND_BRAIN_PRO_CAMPAIGN_SEND_MAX`.
  */
+
+function parseEnvNonNegativeInt(envName: string, fallback: number): number {
+  const raw = process.env[envName]?.trim()
+  if (raw === undefined || raw === '') return fallback
+  const n = Number.parseInt(raw, 10)
+  if (!Number.isFinite(n) || n < 0) return fallback
+  return n
+}
 
 /** Quantos tutores podem aparecer no rascunho de campanha (lista para o usuário escolher). */
 export const SECOND_BRAIN_CAMPAIGN_DRAFT_MAX_TARGETS = 10
 
-// ─── Plano Pro (ajuste números aqui) ─────────────────────────────────────────
+// ─── Plano Pro (override via .env) ───────────────────────────────────────────
 
 /** Mensagens do usuário ao Second Brain por dia (contador por empresa; fuso em BRAIN_TIMEZONE). */
-export const SECOND_BRAIN_PRO_DAILY_MESSAGE_LIMIT = 100
+export const SECOND_BRAIN_PRO_DAILY_MESSAGE_LIMIT = parseEnvNonNegativeInt(
+  'SECOND_BRAIN_PRO_DAILY_MESSAGE_LIMIT',
+  100,
+)
 
 /** Quantas mensagens (user+assistant) entram no contexto do agente de ações (agendamento, campanha, cancelamento). */
 export const BRAIN_ACTION_HISTORY_LIMIT = 100
@@ -27,7 +41,7 @@ export const BRAIN_BATCH_APPOINTMENTS_MAX = 10
 export const BRAIN_SEARCH_APPOINTMENTS_MAX = 25
 
 /** Destinatários por clique em “Enviar campanha” no plano Pro. */
-export const SECOND_BRAIN_PRO_CAMPAIGN_SEND_MAX = 3
+export const SECOND_BRAIN_PRO_CAMPAIGN_SEND_MAX = parseEnvNonNegativeInt('SECOND_BRAIN_PRO_CAMPAIGN_SEND_MAX', 3)
 
 // ─── Mensagens fixas ao usuário ─────────────────────────────────────────────
 
