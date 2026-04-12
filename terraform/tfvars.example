@@ -1,0 +1,35 @@
+# Nome da chave SSH na AWS
+key_name = "ec2-monolito"
+
+# Região da AWS onde a infraestrutura será criada
+# Padrão: "us-east-2"
+# aws_region = "us-east-1"
+
+# Nome do projeto (usado para tags de recursos)
+# Padrão: "auzap-monolito"
+# project_name = "auzap-monolito"
+
+# Seu endereço IP para permitir acesso SSH
+# O valor abaixo é o seu IP atual fixado. Se mudar, atualize aqui.
+# Padrão: "143.255.227.39/32"
+# my_ip = "143.255.227.39/32"
+
+# Tipo da instância EC2
+# Padrão: "t4g.xlarge" (ARM64, 4 vCPUs, 16GB RAM)
+instance_type = "t4g.small"
+
+# Tamanho do disco raiz em GB
+# Padrão: 50
+# volume_size = 50
+
+# URL do repositório Git do projeto
+# Padrão: "https://github.com/auzap-monolito/auzap-monolito.git"
+# project_repo = "https://github.com/auzap-monolito/auzap-monolito.git"
+
+# Bloco CIDR da VPC
+# Padrão: "10.0.0.0/16"
+# vpc_cidr = "10.0.0.0/16"
+
+# Bloco CIDR da Subnet Pública
+# Padrão: "10.0.1.0/24"
+# subnet_cidr = "10.0.1.0/24"
