@@ -1,4 +1,5 @@
 import { Request, Response } from 'express'
+import { Prisma } from '@prisma/client'
 import { prisma } from '../../lib/prisma'
 import type { CreateStaffDTO, UpdateStaffDTO, CreateStaffScheduleDTO, WorkHoursByDay } from './types'
 
@@ -83,7 +84,7 @@ export async function createStaff(req: Request, res: Response) {
       workEnd: new Date(`1970-01-01T${body.work_end}:00`),
       lunchStart: body.lunch_start ? new Date(`1970-01-01T${body.lunch_start}:00`) : null,
       lunchEnd: body.lunch_end ? new Date(`1970-01-01T${body.lunch_end}:00`) : null,
-      workHoursByDay: body.work_hours_by_day ?? undefined,
+      workHoursByDay: body.work_hours_by_day ? (body.work_hours_by_day as unknown as Prisma.InputJsonValue) : undefined,
     },
   })
 
@@ -107,7 +108,7 @@ export async function updateStaff(req: Request, res: Response) {
   if (body.work_end !== undefined) data.workEnd = new Date(`1970-01-01T${body.work_end}:00`)
   if ('lunch_start' in body) data.lunchStart = body.lunch_start ? new Date(`1970-01-01T${body.lunch_start}:00`) : null
   if ('lunch_end' in body) data.lunchEnd = body.lunch_end ? new Date(`1970-01-01T${body.lunch_end}:00`) : null
-  if ('work_hours_by_day' in body) data.workHoursByDay = body.work_hours_by_day ?? null
+  if ('work_hours_by_day' in body) data.workHoursByDay = body.work_hours_by_day ? (body.work_hours_by_day as unknown as Prisma.InputJsonValue) : null
 
   const updated = await prisma.petshopStaff.update({ where: { id }, data })
   return res.json(updated)
