@@ -8,14 +8,17 @@ from __future__ import annotations
 import json
 import logging
 import os
+import random
 import re
 from typing import Any
 
 from openai import AsyncOpenAI
 
+from config import resolve_model_for_company
 from db import get_connection
 from memory.redis_memory import (
     clear_identity_migration_phase,
+    get_identity_migration_data,
     get_identity_migration_phase,
     set_identity_migration_phase,
 )
@@ -35,10 +38,10 @@ async def _redis_clear_best_effort(company_id: int, client_phone: str) -> None:
 
 
 async def _redis_set_or_abort(
-    company_id: int, client_phone: str, phase: str
+    company_id: int, client_phone: str, phase: str, partial: dict | None = None
 ) -> bool:
     try:
-        await set_identity_migration_phase(company_id, client_phone, phase)
+        await set_identity_migration_phase(company_id, client_phone, phase, partial)
         return True
     except Exception:
         logger.exception(
@@ -180,6 +183,7 @@ def _extract_phone_from_message(msg: str, cpf: str) -> tuple[str, str]:
     Retorna (phone_norm, texto_para_manual_phone) ou ('', '').
     """
     scrubbed = _text_scrub_cpf(msg, cpf)
+    # 1. Label explícito: "telefone: ..."
     m = re.search(
         r"(?:telefone|celular|whatsapp|fone)\s*[:.]?\s*([\d\s().\-+]{10,22})",
         scrubbed,
@@ -190,6 +194,7 @@ def _extract_phone_from_message(msg: str, cpf: str) -> tuple[str, str]:
         n = _normalize_br_phone(raw)
         if _is_valid_normalized_br_phone(n) and not _phone_norm_collides_with_cpf(n, cpf):
             return n, raw
+    # 2. Linha isolada que parece telefone
     for line in scrubbed.splitlines():
         line = line.strip()
         if not line or "@" in line:
@@ -201,6 +206,12 @@ def _extract_phone_from_message(msg: str, cpf: str) -> tuple[str, str]:
         n = _normalize_br_phone(line)
         if _is_valid_normalized_br_phone(n) and not _phone_norm_collides_with_cpf(n, cpf):
             return n, line
+    # 3. Número solto no meio do texto (10-11 dígitos, possivelmente com espaços/hífens)
+    for m in re.finditer(r"(?<!\d)([\d\s().\-]{10,16})(?!\d)", scrubbed):
+        raw = m.group(1).strip()
+        n = _normalize_br_phone(raw)
+        if _is_valid_normalized_br_phone(n) and not _phone_norm_collides_with_cpf(n, cpf):
+            return n, raw
     return "", ""
 
 
@@ -462,17 +473,20 @@ def _supplement_identity_from_text(raw: str, data: dict[str, Any]) -> dict[str, 
     return out
 
 
-async def _extract_identity_llm(text: str) -> dict[str, Any]:
+async def _extract_identity_llm(text: str, company_id: int | None = None) -> dict[str, Any]:
     api_key = os.getenv("OPENAI_API_KEY")
     if not api_key:
         return _supplement_identity_from_text(text, {})
-    model = os.getenv("OPENAI_IDENTITY_EXTRACT_MODEL", "gpt-4o-mini")
+    base_model = os.getenv("OPENAI_IDENTITY_EXTRACT_MODEL", "gpt-4o-mini")
+    model = resolve_model_for_company(base_model, company_id)
     client = AsyncOpenAI(api_key=api_key)
     prompt = (
-        "Extraia dados do TUTOR (pessoa) para cadastro em petshop. Não peça nem invente dados de pet. "
-        "Responda só JSON com chaves: full_name, cpf_digits (11 dígitos ou vazio), "
+        "Extraia dados pessoais do cliente para cadastro em petshop. Não peça nem invente dados de pet. "
+        "Retorne apenas o que estiver EXPLICITAMENTE no texto do cliente — se algo não aparecer, deixe o campo vazio. "
+        "NUNCA use palavras deste enunciado (como 'cliente', 'pessoa', 'texto', 'cpf', 'telefone') como valor de full_name. "
+        "Responda só JSON com chaves: full_name (só se houver nome próprio claro), cpf_digits (11 dígitos ou vazio), "
         "email, phone_raw (apenas o trecho do TELEFONE com DDD, nunca o CPF; vazio se não houver telefone).\n"
-        f"Texto:\n{text}"
+        f"Texto do cliente:\n{text}"
     )
     try:
         resp = await client.chat.completions.create(
@@ -629,14 +643,49 @@ async def try_handle_identity_migration(
                 "stage": "IDENTITY_IN_SERVICE",
             }
 
-        extracted = await _extract_identity_llm(user_message)
-        full_name = (extracted.get("full_name") or "").strip()
-        cpf = _digits_only(str(extracted.get("cpf_digits") or ""))
-        email = (extracted.get("email") or "").strip() or None
-        phone_raw = str(extracted.get("phone_raw") or "")
+        # Carrega dados parciais acumulados de mensagens anteriores
+        prev_partial = await get_identity_migration_data(company_id, client_phone)
+
+        extracted = await _extract_identity_llm(user_message, company_id=company_id)
+        new_name = (extracted.get("full_name") or "").strip()
+        new_cpf = _digits_only(str(extracted.get("cpf_digits") or ""))
+        new_email = (extracted.get("email") or "").strip() or None
+        new_phone_raw = str(extracted.get("phone_raw") or "")
+
+        # Se o LLM colocou o telefone no campo CPF (CPF inválido mas parece telefone), corrigir
+        if new_cpf and not _valid_cpf(new_cpf) and _is_valid_normalized_br_phone(_normalize_br_phone(new_cpf)):
+            if not new_phone_raw:
+                new_phone_raw = new_cpf
+            new_cpf = ""
+
+        # Guard anti-placeholder: rejeita "nomes" que são palavras do prompt ou lixo genérico
+        _NAME_BLOCKLIST = {
+            "tutor", "cliente", "pessoa", "texto", "cpf", "telefone",
+            "email", "nome", "usuario", "usuário",
+        }
+        if new_name:
+            low = new_name.lower().strip()
+            # Rejeita palavras únicas do blocklist OU nome com menos de 2 palavras
+            # (nome completo geralmente tem pelo menos 2 palavras)
+            if low in _NAME_BLOCKLIST:
+                new_name = ""
+            elif len(new_name.split()) < 2 and prev_partial.get("full_name"):
+                # Só substitui se prev_partial estiver vazio
+                new_name = ""
+
+        # Mescla: dados novos sobrescrevem apenas campos que vieram preenchidos
+        full_name = new_name or prev_partial.get("full_name", "")
+        cpf = new_cpf if (new_cpf and _valid_cpf(new_cpf)) else prev_partial.get("cpf", "")
+        email = new_email or prev_partial.get("email") or None
+        phone_raw = new_phone_raw or prev_partial.get("phone_raw", "")
+
         phone_norm, manual_display = _resolve_identity_phone(
             phone_raw, user_message, cpf
         )
+        # Se não extraiu telefone desta msg, usa o acumulado
+        if not phone_norm and prev_partial.get("phone_norm"):
+            phone_norm = prev_partial["phone_norm"]
+            manual_display = prev_partial.get("manual_display", "")
 
         missing = []
         if not full_name:
@@ -649,10 +698,27 @@ async def try_handle_identity_migration(
             missing.append("telefone com DDD")
 
         if missing:
+            # Salva dados parciais no Redis para acumular entre mensagens
+            partial = {
+                "full_name": full_name,
+                "cpf": cpf if (cpf and _valid_cpf(cpf)) else "",
+                "email": email or "",
+                "phone_raw": phone_raw,
+                "phone_norm": phone_norm,
+                "manual_display": manual_display,
+            }
+            await _redis_set_or_abort(company_id, client_phone, "awaiting_details", partial)
+
+            missing_str = ", ".join(missing)
+            incomplete_replies = [
+                f"Só faltou: {missing_str}. Pode me enviar?",
+                f"Ainda preciso de: {missing_str}. Manda pra mim?",
+                f"Falta só: {missing_str}. Pode completar?",
+                f"Recebi parte dos dados! Ainda preciso de: {missing_str}.",
+                f"Quase pronto! Me envia só: {missing_str}.",
+            ]
             return {
-                "reply": "Quase lá! Faltou: "
-                + ", ".join(missing)
-                + ". Pode mandar de novo tudo junto?",
+                "reply": random.choice(incomplete_replies),
                 "router_ctx": None,
                 "agent_used": "identity_migration",
                 "stage": "IDENTITY_INCOMPLETE",
