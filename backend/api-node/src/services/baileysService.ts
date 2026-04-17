@@ -154,6 +154,12 @@ export async function startBaileysSession(
     // Ignora eventos de sockets que já foram substituídos
     if (activeSockets.get(companyIdStr) !== socket) return
 
+    // Log raw do Baileys para debug
+    console.log(`[Baileys:RAW][company:${companyIdStr}] messages.upsert | type=${type} | count=${messages.length}`)
+    for (const m of messages) {
+      console.log(`[Baileys:RAW][company:${companyIdStr}]`, JSON.stringify(m, null, 0))
+    }
+
     const now = Math.floor(Date.now() / 1000)
 
     for (const msg of messages) {
@@ -192,7 +198,8 @@ export async function startBaileysSession(
       }
 
       try {
-        await handleIncomingMessage(companyId, socket, msg)
+        const senderPn = (msg.key as any).senderPn || null
+        await handleIncomingMessage(companyId, socket, msg, senderPn)
       } catch (err) {
         console.error(`[Baileys][company:${companyIdStr}] Erro ao processar mensagem:`, err)
       }
