@@ -806,8 +806,14 @@ export default function HotelCrechePage() {
   const filteredRes = selectedRoomTypeFilter === 'all'
     ? currentRes
     : currentRes.filter((r) => r.room_type_id === selectedRoomTypeFilter)
-  const reservados = filteredRes.filter((r) => r.status === 'confirmed' || r.status === 'needs_reschedule')
-  const hospedados = filteredRes.filter((r) => r.status === 'checked_in')
+  // Reservados: check-in mais próximo primeiro (ascendente pela data de check-in).
+  const reservados = filteredRes
+    .filter((r) => r.status === 'confirmed' || r.status === 'needs_reschedule')
+    .sort((a, b) => ymdToLocalDate(a.checkin_date).getTime() - ymdToLocalDate(b.checkin_date).getTime())
+  // Hospedados: check-out mais próximo primeiro (ascendente pela data de check-out).
+  const hospedados = filteredRes
+    .filter((r) => r.status === 'checked_in')
+    .sort((a, b) => ymdToLocalDate(a.checkout_date).getTime() - ymdToLocalDate(b.checkout_date).getTime())
 
   const computeAutoKennel = (target: LodgingReservation) => {
     const occupied = reservations
