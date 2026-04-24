@@ -2,6 +2,8 @@ import { useState, useMemo, useCallback, useEffect, useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { DashboardLayout } from "@/components/templates/DashboardLayout";
 import { CalendarHeader } from "@/components/molecules/CalendarHeader";
+import { HotelTimelineView } from "@/components/molecules/HotelTimelineView";
+import { lodgingReservationService, type LodgingReservation } from "@/services/lodgingService";
 import {
   CalendarGrid,
   type CalendarEvent,
@@ -303,6 +305,31 @@ export default function CalendarioPage() {
   }, [toast]);
 
   const [isModalOpen, setIsModalOpen] = useState(false);
+  const [agendaMode, setAgendaMode] = useState<"agenda" | "hotel">("agenda");
+  const [lodgingReservations, setLodgingReservations] = useState<LodgingReservation[]>([]);
+  const [lodgingLoading, setLodgingLoading] = useState(false);
+
+  // Carrega reservas de hotel/creche apenas quando o toggle vai pra "hotel" pela primeira vez.
+  useEffect(() => {
+    if (agendaMode !== "hotel") return;
+    let cancelled = false;
+    setLodgingLoading(true);
+    lodgingReservationService
+      .list()
+      .then((res) => {
+        if (!cancelled) setLodgingReservations(res);
+      })
+      .catch((err) => {
+        console.error("[calendario] falha ao carregar reservas de lodging:", err);
+        if (!cancelled) toast.error("Erro", "Não foi possível carregar as reservas de hotel/creche.");
+      })
+      .finally(() => {
+        if (!cancelled) setLodgingLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [agendaMode, toast]);
   const [formData, setFormData] =
     useState<NewAppointmentForm>(initialFormState);
   const [formErrors, setFormErrors] = useState<FormErrors>({});
@@ -933,6 +960,19 @@ export default function CalendarioPage() {
     [visibleEvents],
   );
 
+  // Estatísticas da aba Hotel/Creche — mesma lógica da página hotel-creche:
+  //   reservados = confirmadas/needs_reschedule (aguardando check-in)
+  //   hospedados = checked_in (em estadia)
+  const lodgingStats = useMemo(
+    () => ({
+      reservados: lodgingReservations.filter(
+        (r) => r.status === "confirmed" || r.status === "needs_reschedule",
+      ).length,
+      hospedados: lodgingReservations.filter((r) => r.status === "checked_in").length,
+    }),
+    [lodgingReservations],
+  );
+
   const weekAppointments = useMemo(() => {
     const weekFullDates = new Set(weekDays.map((d) => d.fullDate));
     return visibleEvents
@@ -966,10 +1006,27 @@ export default function CalendarioPage() {
             activeView={activeView}
             onViewChange={setActiveView}
             stats={stats}
+            agendaMode={agendaMode}
+            onAgendaModeChange={setAgendaMode}
+            lodgingStats={lodgingStats}
           />
 
           <div className="mt-4 flex min-h-0 flex-1 flex-col gap-4 lg:flex-row lg:gap-0">
-            {eventsLoading ? (
+            {agendaMode === "hotel" ? (
+              lodgingLoading ? (
+                <div className="flex min-h-0 flex-1 items-center justify-center rounded-xl border border-[rgba(114,123,142,0.1)] bg-white dark:border-[#40485A] dark:bg-[#1A1B1D]">
+                  <div className="flex flex-col items-center gap-3 text-sm text-[#727B8E] dark:text-[#8a94a6]">
+                    <Loader2 className="h-8 w-8 animate-spin text-[#1E62EC] dark:text-[#2172e5]" />
+                    <span>Carregando reservas...</span>
+                  </div>
+                </div>
+              ) : (
+                <HotelTimelineView
+                  currentDate={currentDate}
+                  reservations={lodgingReservations}
+                />
+              )
+            ) : eventsLoading ? (
               <div className="flex min-h-0 flex-1 items-center justify-center rounded-xl border border-[rgba(114,123,142,0.1)] bg-white dark:border-[#40485A] dark:bg-[#1A1B1D]">
                 <div className="flex flex-col items-center gap-3 text-sm text-[#727B8E] dark:text-[#8a94a6]">
                   <Loader2 className="h-8 w-8 animate-spin text-[#1E62EC] dark:text-[#2172e5]" />
